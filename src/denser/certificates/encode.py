@@ -44,7 +44,10 @@ def _base_certificate(
     grid: PhysicalGrid,
 ) -> EvidenceCertificate:
     source = np.asarray(source_rgb)
-    decoded = decode_candidate(candidate.payload)
+    if candidate.codec_id == SharedLosslessCodec.codec_id:
+        decoded = SharedLosslessCodec().decode(candidate.payload, source.shape)
+    else:
+        decoded = decode_candidate(candidate.payload)
     if source.dtype != np.uint8 or source.shape != decoded.shape:
         raise ValueError("source and decoded candidate must be matching uint8 RGB arrays")
     reference = compute_acceptance_evidence(source, grid, contract)
