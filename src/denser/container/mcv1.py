@@ -255,6 +255,14 @@ class McV1Reader:
 
     decode_tile = read_tile
 
+    @property
+    def addresses(self) -> tuple[TileAddress, ...]:
+        return tuple(entry.address for entry in self._entries)
+
+    @property
+    def tile_count(self) -> int:
+        return len(self._entries)
+
     def byte_ledger(self) -> SlideByteLedger:
         categories = {name: 0 for name in ByteBreakdown.__dataclass_fields__}
         for entry in self._entries:

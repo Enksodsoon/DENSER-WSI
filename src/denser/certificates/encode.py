@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 
 import numpy as np
 
 from denser.certificates.models import (
     EvidenceCertificate,
+    ReferenceEvidencePayload,
     build_reference_payload,
 )
 from denser.codecs.base import EncodedCandidate
@@ -111,3 +113,44 @@ def build_attested_digest_certificate(
 
 def encode_certificate(certificate: EvidenceCertificate) -> bytes:
     return canonical_json_bytes(certificate.document())
+
+
+def decode_certificate(payload: bytes) -> EvidenceCertificate:
+    try:
+        document = json.loads(payload)
+        scale = document["physical_scale"]
+        reference_document = document["reference_payload"]
+        reference = None
+        if reference_document is not None:
+            reference = ReferenceEvidencePayload(
+                reference_document["version"],
+                float(reference_document["quantization"]),
+                float(reference_document["max_absolute_error"]),
+                tuple(
+                    (item["name"], tuple(int(value) for value in item["values"]))
+                    for item in reference_document["groups"]
+                ),
+            )
+        certificate = EvidenceCertificate(
+            document["version"],
+            document["mode"],
+            bool(document["self_verifying"]),
+            document["contract_digest"],
+            document["implementation_digest"],
+            float(scale["mpp_x"]),
+            float(scale["mpp_y"]),
+            reference,
+            document["candidate_id"],
+            document["fallback_id"],
+            document["repair_region_hex"],
+            document["decoded_evidence_sha256"],
+            document["packet_sha256"],
+            document["decoded_rgb_sha256"],
+            document["verification_status"],
+            document["certificate_digest"],
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise ValueError("evidence certificate encoding is invalid") from error
+    if certificate.expected_digest() != certificate.certificate_digest:
+        raise ValueError("evidence certificate digest mismatch")
+    return certificate
