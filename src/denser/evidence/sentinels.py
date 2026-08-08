@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from denser.evidence.nuclei import connected_components
+from denser.evidence.nuclei import connected_component_stats
 from denser.evidence.stain import sentinel_mask
 from denser.evidence.types import PhysicalGrid
 
@@ -22,14 +22,14 @@ def sentinel_features(
     )
     components = [
         component
-        for component in connected_components(mask)
-        if minimum_pixels <= len(component) <= maximum_pixels
+        for component in connected_component_stats(mask)
+        if minimum_pixels <= component.size <= maximum_pixels
     ]
-    total = sum(len(component) for component in components)
+    total = sum(component.size for component in components)
     height, width = mask.shape
     if components:
-        centroid_y = sum(sum(y for y, _x in component) for component in components) / total
-        centroid_x = sum(sum(x for _y, x in component) for component in components) / total
+        centroid_y = sum(component.sum_y for component in components) / total
+        centroid_x = sum(component.sum_x for component in components) / total
     else:
         centroid_y = centroid_x = 0.0
     return (

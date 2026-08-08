@@ -13,7 +13,10 @@ from denser.codecs.registry import CodecRegistry
 from denser.container.packet_v2 import HEADER as TILE_PACKET_HEADER
 from denser.container.packet_v2 import McV2TilePacket
 from denser.core.models import ByteBreakdown
-from denser.evidence.localized import LocalizedAcceptanceVerifier
+from denser.evidence.localized import (
+    LocalizedAcceptanceVerifier,
+    PreparedLocalizedAcceptanceVerifier,
+)
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
 from denser.repair.escalate import repair_until_verified
 from denser.repair.packet_v2 import apply_repair_packet
@@ -75,12 +78,21 @@ def select_smallest_accepted_candidate(
     *,
     cell_size_px: int,
     halo_um: float = 2.0,
+    prepared_verifier: PreparedLocalizedAcceptanceVerifier | None = None,
 ) -> AcceptedTileCandidate:
     source = np.asarray(source_rgb)
     if source.dtype != np.uint8 or source.ndim != 3 or source.shape[2] != 3:
         raise ValueError("candidate selection requires a uint8 RGB tile")
-    verifier = LocalizedAcceptanceVerifier(contract, cell_size_px, grid)
-    prepared_verifier = verifier.prepare(source)
+    if prepared_verifier is None:
+        prepared_verifier = LocalizedAcceptanceVerifier(
+            contract, cell_size_px, grid
+        ).prepare(source)
+    elif (
+        prepared_verifier.contract != contract
+        or prepared_verifier.cell_size_px != cell_size_px
+        or prepared_verifier.physical_grid != grid
+    ):
+        raise ValueError("prepared verifier configuration does not match selection")
     fallback_codec = SharedLosslessCodec()
     accepted: list[tuple[int, str, AcceptedTileCandidate]] = []
     rejected: list[str] = []

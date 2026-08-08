@@ -21,6 +21,10 @@ from denser.evidence.calibrate import (
     acceptance_contract_from_calibration,
     calibration_record_from_dict,
 )
+from denser.evidence.localized import (
+    LocalizedAcceptanceVerifier,
+    PreparedLocalizedAcceptanceVerifier,
+)
 from denser.evidence.types import PhysicalGrid
 from denser.experiments.candidate_selection import (
     AcceptedTileCandidate,
@@ -128,6 +132,7 @@ def _measure_selection(
     registry: object,
     contract: object,
     grid: PhysicalGrid,
+    prepared_verifier: PreparedLocalizedAcceptanceVerifier,
 ) -> tuple[AcceptedTileCandidate, float]:
     started = time.perf_counter()
     selected = select_smallest_accepted_candidate(
@@ -137,6 +142,7 @@ def _measure_selection(
         contract,  # type: ignore[arg-type]
         grid,
         cell_size_px=max(1, round(8.0 / grid.mean_mpp)),
+        prepared_verifier=prepared_verifier,
     )
     return selected, time.perf_counter() - started
 
@@ -246,17 +252,32 @@ def main() -> int:
                     if (slide_index, tile_index) in completed:
                         continue
                     total_started = time.perf_counter()
+                    prepared_verifier = LocalizedAcceptanceVerifier(
+                        contract,
+                        max(1, round(8.0 / grid.mean_mpp)),
+                        grid,
+                    ).prepare(rgb)
                     started = time.perf_counter()
                     standard_candidates = build_standard_candidates(rgb, StandardLadder())
                     standard_build = time.perf_counter() - started
                     standard, standard_select = _measure_selection(
-                        rgb, standard_candidates, registry, contract, grid
+                        rgb,
+                        standard_candidates,
+                        registry,
+                        contract,
+                        grid,
+                        prepared_verifier,
                     )
                     started = time.perf_counter()
                     uniform_candidates = build_uniform_candidates(rgb, profile)
                     uniform_build = time.perf_counter() - started
                     uniform, uniform_select = _measure_selection(
-                        rgb, uniform_candidates, registry, contract, grid
+                        rgb,
+                        uniform_candidates,
+                        registry,
+                        contract,
+                        grid,
+                        prepared_verifier,
                     )
                     started = time.perf_counter()
                     sensitivity = _sensitivity(rgb)
@@ -264,7 +285,12 @@ def main() -> int:
                     denser_candidates.extend(build_jpegxl_quadtree_candidates(rgb, sensitivity))
                     denser_build = time.perf_counter() - started
                     denser, denser_select = _measure_selection(
-                        rgb, denser_candidates, registry, contract, grid
+                        rgb,
+                        denser_candidates,
+                        registry,
+                        contract,
+                        grid,
+                        prepared_verifier,
                     )
                     tile_pipeline_seconds = time.perf_counter() - total_started
                     standard_cold, standard_warm = _decode_seconds(

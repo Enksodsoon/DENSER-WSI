@@ -16,6 +16,7 @@ from denser.container.mcv2 import McV2Reader, McV2Writer
 from denser.core.errors import PartitionViolation
 from denser.core.models import TileAddress
 from denser.data.manifest import PartitionManifest
+from denser.evidence.localized import LocalizedAcceptanceVerifier
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
 from denser.experiments.candidate_selection import (
     decode_and_verify_tile_packet,
@@ -70,7 +71,7 @@ class FinalContainerResult:
 @dataclass(frozen=True, slots=True)
 class FinalHoldoutResult:
     encoded_addresses: set[TileAddress]
-    address_method_counts: dict[tuple[str, TileAddress], int]
+    address_method_counts: dict[tuple[str, str, TileAddress], int]
     containers: tuple[FinalContainerResult, ...]
     ledgers_match_files: bool
     random_tiles_independently_decodable: bool
@@ -101,7 +102,7 @@ def run_final_holdout(
     profile = CandidateProfile(config.candidate_steps)
     contract = config.acceptance_contract
     registry = config.codec_registry or build_default_registry()
-    counts: dict[tuple[str, TileAddress], int] = {}
+    counts: dict[tuple[str, str, TileAddress], int] = {}
     encoded_addresses: set[TileAddress] = set()
     containers: list[FinalContainerResult] = []
     ledgers_match = True
@@ -112,28 +113,39 @@ def run_final_holdout(
     for slide_number, slide in enumerate(config.slides):
         verify_freeze_record(freeze, config.freeze_context)
         addresses = tuple(iter_level0_grid(slide.width, slide.height, slide.tile_size))
-        for method in config.methods:
-            path = root / f"final-{slide_number:03d}.{method}.mcv2"
-            writer = McV2Writer(path)
+        paths = {
+            method: root / f"final-{slide_number:03d}.{method}.mcv2"
+            for method in config.methods
+        }
+        writers = {method: McV2Writer(path) for method, path in paths.items()}
 
-            def encode_address(address: TileAddress):  # type: ignore[no-untyped-def]
-                tile = np.asarray(slide.read_tile(address))
-                expected_shape = (address.height, address.width, 3)
-                if tile.dtype != np.uint8 or tile.shape != expected_shape:
-                    raise ValueError("final tile loader returned invalid pixels")
+        def encode_address(address: TileAddress):  # type: ignore[no-untyped-def]
+            tile = np.asarray(slide.read_tile(address))
+            expected_shape = (address.height, address.width, 3)
+            if tile.dtype != np.uint8 or tile.shape != expected_shape:
+                raise ValueError("final tile loader returned invalid pixels")
+            grid = PhysicalGrid(slide.mpp, slide.mpp)
+            cell_size_px = max(1, round(8.0 / slide.mpp))
+            prepared_verifier = LocalizedAcceptanceVerifier(
+                contract, cell_size_px, grid
+            ).prepare(tile)
+            encoded_methods = []
+            sensitivity: np.ndarray | None = None
+            for method in config.methods:
                 if method == "standard":
                     candidates = config.standard_builder(tile, config.standard_ladder)
                 elif method == "uniform":
                     candidates = build_uniform_candidates(tile, profile)
                 else:
-                    values = tile.astype(np.float64)
-                    sensitivity = np.empty_like(values)
-                    for channel in range(3):
-                        if min(values.shape[:2]) < 2:
-                            sensitivity[:, :, channel] = 1.0
-                        else:
-                            gy, gx = np.gradient(values[:, :, channel])
-                            sensitivity[:, :, channel] = np.hypot(gx, gy) + 1.0
+                    if sensitivity is None:
+                        values = tile.astype(np.float64)
+                        sensitivity = np.empty_like(values)
+                        for channel in range(3):
+                            if min(values.shape[:2]) < 2:
+                                sensitivity[:, :, channel] = 1.0
+                            else:
+                                gy, gx = np.gradient(values[:, :, channel])
+                                sensitivity[:, :, channel] = np.hypot(gx, gy) + 1.0
                     candidates = build_denser_candidates(tile, sensitivity, profile)
                     candidates.extend(config.quadtree_builder(tile, sensitivity))
                 selected = select_smallest_accepted_candidate(
@@ -141,25 +153,36 @@ def run_final_holdout(
                     candidates,
                     registry,
                     contract,
-                    PhysicalGrid(slide.mpp, slide.mpp),
-                    cell_size_px=max(1, round(8.0 / slide.mpp)),
+                    grid,
+                    cell_size_px=cell_size_px,
+                    prepared_verifier=prepared_verifier,
                 )
-                return address, selected.packet, selected.breakdown, 0
+                encoded_methods.append(
+                    (method, selected.packet, selected.breakdown, 0)
+                )
+            return address, encoded_methods
 
-            try:
-                tile_workers = max(1, min(3, config.cpu_workers // 2))
-                with ThreadPoolExecutor(max_workers=tile_workers) as pool:
-                    encoded = pool.map(encode_address, addresses)
-                    for address, packet, breakdown, violation in encoded:
-                        unresolved += violation
-                        writer.add_tile(address, packet, breakdown)
-                        key = (method, address)
-                        counts[key] = counts.get(key, 0) + 1
+        try:
+            tile_workers = max(1, min(3, config.cpu_workers // 2))
+            with ThreadPoolExecutor(max_workers=tile_workers) as pool:
+                for start in range(0, len(addresses), tile_workers):
+                    encoded = pool.map(
+                        encode_address, addresses[start : start + tile_workers]
+                    )
+                    for address, encoded_methods in encoded:
+                        for method, packet, breakdown, violation in encoded_methods:
+                            writers[method].add_tile(address, packet, breakdown)
+                            key = (slide.research_id, method, address)
+                            counts[key] = counts.get(key, 0) + 1
+                            unresolved += violation
                         encoded_addresses.add(address)
+            for writer in writers.values():
                 writer.finalize()
-            except Exception:
+        except Exception:
+            for writer in writers.values():
                 writer.abort()
-                raise
+            raise
+        for method, path in paths.items():
             reader = McV2Reader(path)
             ledger = reader.byte_ledger()
             ledgers_match &= ledger.complete_bytes == path.stat().st_size
@@ -171,7 +194,9 @@ def run_final_holdout(
                     contract,
                 )
                 independent &= tile.shape == (address.height, address.width, 3)
-            containers.append(FinalContainerResult(method, path, ledger.complete_bytes, len(addresses)))
+            containers.append(
+                FinalContainerResult(method, path, ledger.complete_bytes, len(addresses))
+            )
     return FinalHoldoutResult(
         encoded_addresses,
         counts,

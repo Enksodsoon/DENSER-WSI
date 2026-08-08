@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from denser.evidence.stain import (
@@ -10,7 +12,17 @@ from denser.evidence.stain import (
 from denser.evidence.types import PhysicalGrid
 
 
-def connected_components(mask: np.ndarray) -> tuple[tuple[tuple[int, int], ...], ...]:
+@dataclass(frozen=True, slots=True)
+class ComponentStats:
+    size: int
+    sum_y: int
+    sum_x: int
+    touches_border: bool
+
+
+def _component_runs(
+    mask: np.ndarray,
+) -> tuple[list[tuple[int, int, int]], tuple[tuple[int, ...], ...], tuple[int, int]]:
     binary = np.asarray(mask, dtype=bool)
     if binary.ndim != 2:
         raise ValueError("connected-component mask must be two-dimensional")
@@ -35,9 +47,16 @@ def connected_components(mask: np.ndarray) -> tuple[tuple[tuple[int, int], ...],
 
     previous: list[int] = []
     for y, row in enumerate(binary):
-        transitions = np.diff(np.pad(row.astype(np.int8), (1, 1)))
-        starts = np.flatnonzero(transitions == 1)
-        ends = np.flatnonzero(transitions == -1)
+        if not row.size:
+            previous = []
+            continue
+        boundaries = np.concatenate(
+            ([0], np.flatnonzero(row[1:] != row[:-1]) + 1, [row.size])
+        )
+        if row[0]:
+            starts, ends = boundaries[0:-1:2], boundaries[1::2]
+        else:
+            starts, ends = boundaries[1:-1:2], boundaries[2::2]
         current: list[int] = []
         previous_cursor = 0
         for start, end in zip(starts.tolist(), ends.tolist(), strict=True):
@@ -61,8 +80,38 @@ def connected_components(mask: np.ndarray) -> tuple[tuple[tuple[int, int], ...],
     grouped: dict[int, list[int]] = {}
     for index in range(len(runs)):
         grouped.setdefault(find(index), []).append(index)
+    return runs, tuple(tuple(indices) for indices in grouped.values()), binary.shape
+
+
+def connected_component_stats(mask: np.ndarray) -> tuple[ComponentStats, ...]:
+    runs, components, shape = _component_runs(mask)
+    height, width = shape
+    values = []
+    for indices in components:
+        size = 0
+        sum_y = 0
+        sum_x = 0
+        touches_border = False
+        for index in indices:
+            y, start, end = runs[index]
+            length = end - start
+            size += length
+            sum_y += y * length
+            sum_x += (start + end - 1) * length // 2
+            touches_border = (
+                touches_border
+                or y in (0, height - 1)
+                or start == 0
+                or end == width
+            )
+        values.append(ComponentStats(size, sum_y, sum_x, touches_border))
+    return tuple(values)
+
+
+def connected_components(mask: np.ndarray) -> tuple[tuple[tuple[int, int], ...], ...]:
+    runs, grouped, _shape = _component_runs(mask)
     components = []
-    for indices in grouped.values():
+    for indices in grouped:
         points = tuple(
             (y, x)
             for index in indices
@@ -93,13 +142,17 @@ def nuclear_features(
         raise ValueError("nuclear hematoxylin field does not match RGB pixels")
     objects = [
         component
-        for component in connected_components(hematoxylin > 0.55)
-        if minimum_pixels <= len(component) <= maximum_pixels
+        for component in connected_component_stats(hematoxylin > 0.55)
+        if minimum_pixels <= component.size <= maximum_pixels
     ]
-    area = sum(len(component) for component in objects)
+    area = sum(component.size for component in objects)
     if objects:
-        centroid_y = sum(sum(y for y, _x in component) / len(component) for component in objects) / len(objects)
-        centroid_x = sum(sum(x for _y, x in component) / len(component) for component in objects) / len(objects)
+        centroid_y = sum(component.sum_y / component.size for component in objects) / len(
+            objects
+        )
+        centroid_x = sum(component.sum_x / component.size for component in objects) / len(
+            objects
+        )
     else:
         centroid_y = centroid_x = 0.0
     height, width = hematoxylin.shape

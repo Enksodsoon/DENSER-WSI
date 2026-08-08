@@ -38,12 +38,14 @@ def no_quadtree(tile, sensitivity):  # type: ignore[no-untyped-def]
 def test_final_encodes_every_level0_tile_once(tmp_path: Path) -> None:
     active_readers = 0
     maximum_readers = 0
+    total_reads = 0
     lock = threading.Lock()
 
     def read_tile(address):
-        nonlocal active_readers, maximum_readers
+        nonlocal active_readers, maximum_readers, total_reads
         with lock:
             active_readers += 1
+            total_reads += 1
             maximum_readers = max(maximum_readers, active_readers)
         time.sleep(0.005)
         with lock:
@@ -69,9 +71,11 @@ def test_final_encodes_every_level0_tile_once(tmp_path: Path) -> None:
     assert result.encoded_addresses == expected
     assert all(count == 1 for count in result.address_method_counts.values())
     assert len(result.address_method_counts) == len(expected) * 3
+    assert {key[0] for key in result.address_method_counts} == {"synthetic-final"}
     assert result.ledgers_match_files
     assert result.random_tiles_independently_decodable
     assert 1 < maximum_readers <= 3
+    assert total_reads == len(expected)
 
 
 def test_final_forbids_sample_extrapolation(tmp_path: Path) -> None:

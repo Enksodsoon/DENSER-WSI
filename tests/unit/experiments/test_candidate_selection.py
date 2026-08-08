@@ -9,6 +9,7 @@ from denser.codecs.lossless import SharedLosslessCodec
 from denser.codecs.registry import CodecRegistry
 from denser.container.packet_v2 import McV2TilePacket
 from denser.core.models import ByteBreakdown
+from denser.evidence.localized import LocalizedAcceptanceVerifier
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
 from denser.experiments.candidate_selection import select_smallest_accepted_candidate
 
@@ -76,3 +77,33 @@ def test_selection_skips_candidates_whose_bytes_cannot_beat_current_best() -> No
     )
     assert selected.breakdown.complete == len(selected.packet)
     assert "huge" not in calls
+
+
+def test_selection_reuses_only_a_matching_prepared_source_verifier() -> None:
+    source = np.zeros((8, 8, 3), dtype=np.uint8)
+    contract = AcceptanceContract()
+    grid = PhysicalGrid(0.25, 0.25)
+    prepared = LocalizedAcceptanceVerifier(contract, 8, grid).prepare(source)
+    registry = CodecRegistry()
+    registry.register("fixture", lambda payload, allocation, shape, profile: source.copy())
+    selected = select_smallest_accepted_candidate(
+        source,
+        [_candidate("accepted", b"x")],
+        registry,
+        contract,
+        grid,
+        cell_size_px=8,
+        prepared_verifier=prepared,
+    )
+    assert selected.candidate.profile_id == "accepted"
+
+    with np.testing.assert_raises_regex(ValueError, "prepared verifier configuration"):
+        select_smallest_accepted_candidate(
+            source,
+            [_candidate("accepted", b"x")],
+            registry,
+            AcceptanceContract(visual_relative_tolerance=0.5),
+            grid,
+            cell_size_px=8,
+            prepared_verifier=prepared,
+        )

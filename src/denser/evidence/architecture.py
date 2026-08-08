@@ -5,7 +5,7 @@ import hashlib
 import numpy as np
 
 from denser.core.canonical import canonical_json_bytes
-from denser.evidence.nuclei import connected_components, nuclear_features
+from denser.evidence.nuclei import connected_component_stats, nuclear_features
 from denser.evidence.sentinels import sentinel_features
 from denser.evidence.stain import hematoxylin_concentration
 from denser.evidence.types import (
@@ -26,13 +26,12 @@ def architecture_features(
         1, int(np.ceil(0.25 / (grid.mpp_x * grid.mpp_y)))
     )
     bright = np.all(pixels > 245, axis=2)
-    height, width = bright.shape
-    enclosed = []
-    for component in connected_components(bright):
-        touches_border = any(y in (0, height - 1) or x in (0, width - 1) for y, x in component)
-        if not touches_border and len(component) >= minimum_lumen_pixels:
-            enclosed.append(component)
-    lumen_area = sum(len(component) for component in enclosed)
+    enclosed = [
+        component
+        for component in connected_component_stats(bright)
+        if not component.touches_border and component.size >= minimum_lumen_pixels
+    ]
+    lumen_area = sum(component.size for component in enclosed)
     tissue_fraction = float((pixels.astype(np.float64).mean(axis=2) < 240).mean())
     return (float(len(enclosed)), lumen_area / bright.size, tissue_fraction)
 
