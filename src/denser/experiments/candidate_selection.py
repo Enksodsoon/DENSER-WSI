@@ -126,9 +126,24 @@ def select_smallest_accepted_candidate(
         )
 
     ordered = sorted(candidates, key=lambda item: (packet_lower_bound(item), item.profile_id))
+    initial_bound = next(
+        (
+            item
+            for item in ordered
+            if item.codec_id == "jpeg" and item.profile_id == "jpeg-q90-444-opt"
+        ),
+        None,
+    )
+    evaluation_order = (
+        [initial_bound, *(item for item in ordered if item is not initial_bound)]
+        if initial_bound is not None
+        else ordered
+    )
     prepared_verifier.prepare_cells()
-    for candidate in ordered:
+    for index, candidate in enumerate(evaluation_order):
         if packet_lower_bound(candidate) > best_complete_bytes:
+            if index == 0 and candidate is initial_bound:
+                continue
             break
         try:
             decoded = registry.decode(candidate, source.shape)

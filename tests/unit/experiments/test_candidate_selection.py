@@ -139,3 +139,31 @@ def test_selection_reuses_only_a_matching_prepared_source_verifier() -> None:
             cell_size_px=8,
             prepared_verifier=prepared,
         )
+
+
+def test_standard_portfolio_uses_frozen_jpeg90_as_initial_byte_bound() -> None:
+    source = np.random.default_rng(40).integers(0, 256, (16, 16, 3), dtype=np.uint8)
+    calls: list[str] = []
+    registry = CodecRegistry()
+
+    def decode(payload, allocation, shape, profile):  # type: ignore[no-untyped-def]
+        calls.append(profile)
+        return source.copy() if profile in {"jpeg-q90-444-opt", "smaller-pass"} else np.zeros(shape, dtype=np.uint8)
+
+    registry.register("jpeg", decode)
+    candidates = [
+        EncodedCandidate("jpeg", "small-fail", b"a", ByteBreakdown(payload=1)),
+        EncodedCandidate("jpeg", "smaller-pass", b"b" * 8, ByteBreakdown(payload=8)),
+        EncodedCandidate("jpeg", "jpeg-q90-444-opt", b"c" * 32, ByteBreakdown(payload=32)),
+        EncodedCandidate("jpeg", "large", b"d" * 64, ByteBreakdown(payload=64)),
+    ]
+    selected = select_smallest_accepted_candidate(
+        source,
+        candidates,
+        registry,
+        AcceptanceContract(0.0, 0.0, 0.0, 0.0),
+        PhysicalGrid(0.25, 0.25),
+        cell_size_px=8,
+    )
+    assert calls[0] == "jpeg-q90-444-opt"
+    assert selected.candidate.profile_id == "smaller-pass"
