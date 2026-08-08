@@ -76,3 +76,26 @@ def test_incremental_repair_verification_matches_full_reverification() -> None:
     assert verifier.verify_changed(source, repaired, initial, changed) == verifier.verify(
         source, repaired
     )
+
+
+def test_incremental_verification_skips_cells_restored_exactly_to_source(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    source = np.random.default_rng(32).integers(0, 256, (32, 32, 3), dtype=np.uint8)
+    proposal = source.copy()
+    proposal[:16, :16] = 255
+    verifier = LocalizedAcceptanceVerifier(
+        AcceptanceContract(0.01, 0.01, 0.001, 0.01), 16
+    ).prepare(source)
+    initial = verifier.verify(source, proposal)
+    repaired = source.copy()
+    changed = np.any(repaired != proposal, axis=2)
+
+    def unexpected_cell_extraction(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("an exact-source cell must not be re-extracted")
+
+    monkeypatch.setattr(
+        "denser.evidence.localized.compute_acceptance_groups",
+        unexpected_cell_extraction,
+    )
+    result = verifier.verify_changed(source, repaired, initial, changed)
+    assert result.passed
+    assert result.failures == ()

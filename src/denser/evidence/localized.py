@@ -199,12 +199,30 @@ class PreparedLocalizedAcceptanceVerifier:
             ((height + self.cell_size_px - 1) // self.cell_size_px)
             * ((width + self.cell_size_px - 1) // self.cell_size_px)
         )
-        changed_cells = sum(
-            bool(np.any(changed[y : y + self.cell_size_px, x : x + self.cell_size_px]))
+        changed_bounds = {
+            (x, y, min(self.cell_size_px, width - x), min(self.cell_size_px, height - y))
             for y in range(0, height, self.cell_size_px)
             for x in range(0, width, self.cell_size_px)
-        )
-        if changed_cells >= max(4, (total_cells + 7) // 8):
+            if np.any(changed[y : y + self.cell_size_px, x : x + self.cell_size_px])
+        }
+        exact_source_bounds = {
+            bounds
+            for bounds in changed_bounds
+            if np.array_equal(
+                candidate[
+                    bounds[1] : bounds[1] + bounds[3],
+                    bounds[0] : bounds[0] + bounds[2],
+                ],
+                original[
+                    bounds[1] : bounds[1] + bounds[3],
+                    bounds[0] : bounds[0] + bounds[2],
+                ],
+            )
+        }
+        if (
+            len(changed_bounds) >= max(4, (total_cells + 7) // 8)
+            and changed_bounds != exact_source_bounds
+        ):
             return self.verify(original, candidate)
         candidate_evidence = compute_acceptance_evidence(
             candidate, self.physical_grid, self.contract
@@ -223,7 +241,9 @@ class PreparedLocalizedAcceptanceVerifier:
                 cell_height = min(self.cell_size_px, height - y)
                 cell_width = min(self.cell_size_px, width - x)
                 bounds = (x, y, cell_width, cell_height)
-                if not np.any(changed[y : y + cell_height, x : x + cell_width]):
+                if bounds in exact_source_bounds:
+                    failed_groups = ()
+                elif bounds not in changed_bounds:
                     failed_groups = previous_cells.get(bounds, ())
                 else:
                     reference = self._cell_references[
