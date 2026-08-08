@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import struct
-import zlib
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import numpy as np
 
+from denser.codecs.base import EncodedCandidate
 from denser.codecs.lossless import SharedLosslessCodec
 from denser.core.models import ByteBreakdown
 from denser.repair.mask import RepairFailure, build_union_repair_mask
@@ -32,15 +31,13 @@ class RepairResult:
 
 def _blend_overlay(
     proposal: np.ndarray, source: np.ndarray, mask: np.ndarray, numerator: int
-) -> tuple[np.ndarray, bytes]:
+) -> np.ndarray:
     repaired = proposal.copy()
     current = repaired[mask].astype(np.int16)
     target = source[mask].astype(np.int16)
     values = np.rint((current * (4 - numerator) + target * numerator) / 4).astype(np.uint8)
     repaired[mask] = values
-    delta = (values.astype(np.int16) - current).astype(">i2").tobytes()
-    packet = struct.pack(">4sBI", b"ROV1", numerator, values.shape[0]) + zlib.compress(delta, 9)
-    return repaired, packet
+    return repaired
 
 
 def _failures(result: Any) -> tuple[RepairFailure, ...]:
@@ -56,6 +53,10 @@ def repair_until_verified(
     *,
     halo_um: float = 2.0,
     mpp: float = 0.25,
+    initial_verification: Any | None = None,
+    encoded_fallback: EncodedCandidate | None = None,
+    fallback_decoded: np.ndarray | None = None,
+    maximum_repair_bytes: int | None = None,
 ) -> RepairResult:
     original = np.asarray(source)
     decoded = np.asarray(proposal)
@@ -64,33 +65,51 @@ def repair_until_verified(
     if decoded.dtype != np.uint8 or decoded.shape != original.shape:
         raise ValueError("proposal must match the uint8 RGB source shape")
 
-    initial = verifier.verify(original, decoded)
+    if maximum_repair_bytes is not None and maximum_repair_bytes < 0:
+        raise ValueError("maximum repair bytes cannot be negative")
+    initial = (
+        initial_verification
+        if initial_verification is not None
+        else verifier.verify(original, decoded)
+    )
     if bool(getattr(initial, "passed", initial)):
         return RepairResult("verified", "proposal", decoded.copy(), ByteBreakdown())
 
     failures = _failures(initial)
-    encoded_fallback = fallback.encode(original)
-    fallback_decoded = fallback.decode(encoded_fallback.payload, original.shape)
+    selected_fallback = encoded_fallback or fallback.encode(original)
+    selected_fallback_decoded = (
+        np.asarray(fallback_decoded)
+        if fallback_decoded is not None
+        else fallback.decode(selected_fallback.payload, original.shape)
+    )
+    if selected_fallback.codec_id != fallback.codec_id or not np.array_equal(
+        selected_fallback_decoded, original
+    ):
+        raise ValueError("provided fallback is not the exact source tile")
     fallback_breakdown = ByteBreakdown(
-        payload=encoded_fallback.breakdown.payload, fallback_signaling=1
+        payload=selected_fallback.breakdown.payload, fallback_signaling=1
     )
     fallback_result = RepairResult(
-        "fallback", "whole_tile_lossless", fallback_decoded, fallback_breakdown
+        "fallback", "whole_tile_lossless", selected_fallback_decoded, fallback_breakdown
     )
     if not failures:
         return fallback_result
 
     mask = build_union_repair_mask(failures, halo_um=halo_um, mpp=mpp)
-    attempted_overlay_bytes = 0
+    def byte_dominated(payload_length: int) -> bool:
+        return payload_length >= fallback_breakdown.complete or (
+            maximum_repair_bytes is not None
+            and payload_length > maximum_repair_bytes
+        )
+
     for stage, numerator in (("finer_local_quantization", 2), ("transform_coefficient_overlay", 3)):
-        repaired, packet = _blend_overlay(decoded, original, mask.pixels, numerator)
-        attempted_overlay_bytes += len(packet)
+        repaired = _blend_overlay(decoded, original, mask.pixels, numerator)
+        stored = encode_repair_packet(mask, repaired)
+        if byte_dominated(len(stored)):
+            continue
         verification = verifier.verify(original, repaired)
         if bool(getattr(verification, "passed", verification)):
-            stored = encode_repair_packet(mask, repaired)
             breakdown = ByteBreakdown(repair=len(stored))
-            if breakdown.complete >= fallback_breakdown.complete:
-                return fallback_result
             return RepairResult(
                 "verified_repair",
                 stage,
@@ -103,18 +122,19 @@ def repair_until_verified(
 
     residual = encode_exact_residual(original, mask)
     repaired = apply_exact_residual(decoded, mask, residual)
+    stored = encode_repair_packet(mask, repaired)
+    if byte_dominated(len(stored)):
+        return fallback_result
     verification = verifier.verify(original, repaired)
     if bool(getattr(verification, "passed", verification)):
-        stored = encode_repair_packet(mask, repaired)
         breakdown = ByteBreakdown(repair=len(stored))
-        if breakdown.complete < fallback_breakdown.complete:
-            return RepairResult(
-                "verified_repair",
-                "exact_pixel_residual",
-                repaired,
-                breakdown,
-                stored,
-                mask_bytes=len(mask.encoded),
-                residual_bytes=len(stored) - len(mask.encoded),
-            )
+        return RepairResult(
+            "verified_repair",
+            "exact_pixel_residual",
+            repaired,
+            breakdown,
+            stored,
+            mask_bytes=len(mask.encoded),
+            residual_bytes=len(stored) - len(mask.encoded),
+        )
     return fallback_result

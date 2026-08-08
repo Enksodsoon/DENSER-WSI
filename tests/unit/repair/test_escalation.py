@@ -93,3 +93,30 @@ def test_repair_packet_corruption_fails_closed() -> None:
     damaged[-1] ^= 1
     with pytest.raises(ValueError):
         apply_repair_packet(proposal, bytes(damaged))
+
+
+def test_byte_dominated_repair_stages_are_not_reverified() -> None:
+    original = source()
+    proposal = np.zeros_like(original)
+    failure = RepairFailure(0, 0, 8, 8, image_width=8, image_height=8)
+
+    class CountingVerifier:
+        calls = 0
+
+        def verify(self, source: np.ndarray, decoded: np.ndarray) -> Check:
+            self.calls += 1
+            return Check(False, (failure,))
+
+    verifier = CountingVerifier()
+    codec = SharedLosslessCodec()
+    result = repair_until_verified(
+        original,
+        proposal,
+        verifier,
+        codec,
+        initial_verification=Check(False, (failure,)),
+        encoded_fallback=codec.encode(original),
+        maximum_repair_bytes=1,
+    )
+    assert result.status == "fallback"
+    assert verifier.calls == 0

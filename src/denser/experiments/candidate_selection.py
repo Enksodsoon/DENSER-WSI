@@ -121,6 +121,12 @@ def select_smallest_accepted_candidate(
                 fallback_codec,
                 halo_um=halo_um,
                 mpp=grid.mean_mpp,
+                initial_verification=verification,
+                encoded_fallback=fallback,
+                fallback_decoded=fallback_decoded,
+                maximum_repair_bytes=max(
+                    0, best_complete_bytes - packet_lower_bound(candidate)
+                ),
             )
             if repair.status != "verified_repair":
                 rejected.append(candidate.profile_id)
