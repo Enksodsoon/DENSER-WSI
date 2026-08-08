@@ -20,6 +20,7 @@ class RepairFailure:
     height: int
     image_width: int
     image_height: int
+    failed_groups: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if min(self.x, self.y) < 0 or min(self.width, self.height) <= 0:
@@ -28,6 +29,8 @@ class RepairFailure:
             raise ValueError("image dimensions must be positive")
         if self.x + self.width > self.image_width or self.y + self.height > self.image_height:
             raise ValueError("failure bounds exceed the image")
+        if len(set(self.failed_groups)) != len(self.failed_groups):
+            raise ValueError("failure evidence groups must be unique")
 
     @property
     def pixel_count(self) -> int:

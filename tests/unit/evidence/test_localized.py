@@ -20,6 +20,7 @@ def test_localized_verifier_returns_bounded_failed_cells() -> None:
     assert result.failures
     assert all(item.width <= 8 and item.height <= 8 for item in result.failures)
     assert any(item.x == 0 and item.y == 0 for item in result.failures)
+    assert all(item.failed_groups for item in result.failures)
 
 
 def test_localized_verifier_accepts_identical_pixels() -> None:

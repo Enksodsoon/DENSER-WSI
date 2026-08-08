@@ -103,7 +103,27 @@ class PreparedLocalizedAcceptanceVerifier:
                     self.contract,
                 )
                 if cell.failed_groups:
-                    failures.append(RepairFailure(x, y, cell_width, cell_height, width, height))
+                    failures.append(
+                        RepairFailure(
+                            x,
+                            y,
+                            cell_width,
+                            cell_height,
+                            width,
+                            height,
+                            cell.failed_groups,
+                        )
+                    )
         if not failures and comparison.failed_groups:
-            failures.append(RepairFailure(0, 0, width, height, width, height))
+            failures.append(
+                RepairFailure(
+                    0,
+                    0,
+                    width,
+                    height,
+                    width,
+                    height,
+                    comparison.failed_groups,
+                )
+            )
         return LocalizedAcceptanceResult(not failures, tuple(failures))

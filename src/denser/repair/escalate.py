@@ -97,10 +97,15 @@ def repair_until_verified(
 
     accepted_overlay: RepairResult | None = None
     evidence_cell_size = max(8, min(128, round(8.0 / mpp)))
-    for stage, count, step in (
-        ("finer_local_quantization", 0, 1.0),
-        ("transform_coefficient_overlay", 16, 1.0),
-    ):
+    failed_groups = {
+        name for failure in failures for name in failure.failed_groups
+    }
+    stages = []
+    if not failed_groups or failed_groups <= {"visual"}:
+        stages.append(("finer_local_quantization", 0, 1.0))
+    if not failed_groups or failed_groups <= {"visual", "nuclear_objects"}:
+        stages.append(("transform_coefficient_overlay", 16, 1.0))
+    for stage, count, step in stages:
         stored = encode_transform_overlay(
             original,
             decoded,
