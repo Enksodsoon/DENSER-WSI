@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Enksodsoon/DENSER-WSI/schemas/calibration_record.schema.json",
+  "title": "HE-V1 calibration record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "threshold_basis", "alpha", "standardization", "thresholds",
+    "fit_control_ids", "challenge_control_ids", "sha256"
+  ],
+  "properties": {
+    "version": {"const": "HE-V1-calibration-1"},
+    "threshold_basis": {"const": "tile_familywise_max"},
+    "alpha": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 0.5},
+    "standardization": {"type": "array", "minItems": 1},
+    "thresholds": {"type": "array", "minItems": 1},
+    "fit_control_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "challenge_control_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
