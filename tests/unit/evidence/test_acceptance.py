@@ -5,8 +5,10 @@ import pytest
 
 from denser.evidence.architecture import (
     compare_acceptance,
+    compute_acceptance_groups,
     compute_acceptance_evidence,
 )
+from denser.evidence.cell_batch import compute_cell_acceptance_groups
 from denser.evidence.nuclei import nuclear_features
 from denser.evidence.sentinels import sentinel_features
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
@@ -159,3 +161,23 @@ def test_fast_visual_features_preserve_reference_values(shape: tuple[int, int, i
     assert visual_features(rgb) == pytest.approx(
         _reference_visual_features(rgb), rel=1e-12, abs=1e-12
     )
+
+
+def test_batched_cell_evidence_matches_scalar_reference() -> None:
+    rgb = np.random.default_rng(23).integers(0, 256, (64, 64, 3), dtype=np.uint8)
+    grid = PhysicalGrid(0.25, 0.25)
+    observed = compute_cell_acceptance_groups(rgb, grid, 16)
+    assert observed is not None
+    for y in range(0, 64, 16):
+        for x in range(0, 64, 16):
+            expected = compute_acceptance_groups(rgb[y : y + 16, x : x + 16], grid)
+            actual = observed[(x, y, 16, 16)]
+            assert [name for name, _values in actual] == [
+                name for name, _values in expected
+            ]
+            for (_name, actual_values), (_other, expected_values) in zip(
+                actual, expected, strict=True
+            ):
+                assert actual_values == pytest.approx(
+                    expected_values, rel=1e-10, abs=1e-10
+                )
