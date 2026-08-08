@@ -203,7 +203,7 @@ def main() -> int:
         "results",
         "development",
         "generation-1",
-        "feasibility-source-extension.private.json",
+        f"feasibility-source-extension-{arguments.tiles_per_slide}.private.json",
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     identity = {
