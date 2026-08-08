@@ -61,8 +61,8 @@ def test_quadtree_grid_predeclares_increasingly_conservative_allocations() -> No
         min_leaf=8,
         codec_factory=LosslessLeafCodec,
     )
-    assert len(candidates) == 3
-    assert len({candidate.profile_id for candidate in candidates}) == 3
+    assert len(candidates) == 4
+    assert len({candidate.profile_id for candidate in candidates}) == 4
     high_quality_counts = []
     for candidate in candidates:
         allocation = QuadtreeAllocationMap.decode(candidate.allocation_map)

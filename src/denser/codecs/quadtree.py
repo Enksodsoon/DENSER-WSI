@@ -130,6 +130,7 @@ def build_jpegxl_quadtree_candidate(
     min_leaf: int = 128,
     allocation_quantiles: tuple[float, float] = (0.5, 0.75),
     allocation_policy_id: str = "alloc25-25-50",
+    fixed_quality_code: int | None = None,
     codec_factory: Callable[[float], LeafCodec] = JpegXlCodec,
 ) -> EncodedCandidate:
     pixels = np.asarray(rgb)
@@ -139,7 +140,11 @@ def build_jpegxl_quadtree_candidate(
     if min_leaf < 8 or min_leaf & (min_leaf - 1):
         raise ValueError("quadtree minimum leaf must be a power of two of at least eight")
     lower_quantile, upper_quantile = allocation_quantiles
-    if not 0 <= lower_quantile < upper_quantile <= 1 or not allocation_policy_id:
+    if (
+        not 0 <= lower_quantile < upper_quantile <= 1
+        or not allocation_policy_id
+        or (fixed_quality_code is not None and fixed_quality_code not in range(len(QUALITY_DISTANCES)))
+    ):
         raise ValueError("quadtree allocation policy is invalid")
     regions = _regions(values, min_leaf)
     means = np.asarray([item[4] for item in regions])
@@ -148,7 +153,11 @@ def build_jpegxl_quadtree_candidate(
         if len(means) > 1
         else (means[0], means[0])
     )
-    codes = [0 if mean >= upper else 1 if mean >= lower else 2 for *_region, mean in regions]
+    codes = (
+        [fixed_quality_code] * len(regions)
+        if fixed_quality_code is not None
+        else [0 if mean >= upper else 1 if mean >= lower else 2 for *_region, mean in regions]
+    )
 
     def encode_leaf(item):  # type: ignore[no-untyped-def]
         (x, y, width, height, _mean), code = item
@@ -182,9 +191,10 @@ def build_jpegxl_quadtree_candidates(
     codec_factory: Callable[[float], LeafCodec] = JpegXlCodec,
 ) -> list[EncodedCandidate]:
     policies = (
-        ((0.5, 0.75), "alloc25-25-50"),
-        ((0.25, 0.5), "alloc50-25-25"),
-        ((0.0, 0.25), "alloc75-25-0"),
+        ((0.5, 0.75), "alloc25-25-50", None),
+        ((0.25, 0.5), "alloc50-25-25", None),
+        ((0.0, 0.25), "alloc75-25-0", None),
+        ((0.0, 0.25), "all-d0.5", 0),
     )
     return [
         build_jpegxl_quadtree_candidate(
@@ -193,9 +203,10 @@ def build_jpegxl_quadtree_candidates(
             min_leaf=min_leaf,
             allocation_quantiles=quantiles,
             allocation_policy_id=policy_id,
+            fixed_quality_code=fixed_quality_code,
             codec_factory=codec_factory,
         )
-        for quantiles, policy_id in policies
+        for quantiles, policy_id, fixed_quality_code in policies
     ]
 
 

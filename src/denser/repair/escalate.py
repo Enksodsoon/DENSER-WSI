@@ -9,7 +9,10 @@ from denser.codecs.base import EncodedCandidate
 from denser.codecs.lossless import SharedLosslessCodec
 from denser.core.models import ByteBreakdown
 from denser.repair.mask import RepairFailure, build_union_repair_mask
-from denser.repair.packet_v2 import encode_repair_packet
+from denser.repair.packet_v2 import (
+    encode_composite_repair_packet,
+    encode_repair_packet,
+)
 from denser.repair.residual import apply_exact_residual, encode_exact_residual
 from denser.repair.transform_overlay import (
     apply_transform_overlay,
@@ -102,11 +105,63 @@ def repair_until_verified(
     if not failures:
         return fallback_result
 
-    mask = build_union_repair_mask(failures, halo_um=halo_um, mpp=mpp)
     def byte_dominated(payload_length: int) -> bool:
         return payload_length >= fallback_breakdown.complete or (
             maximum_repair_bytes is not None
             and payload_length > maximum_repair_bytes
+        )
+
+    prefix_parts: tuple[bytes, ...] = ()
+    prefix_mask_bytes = 0
+    prefix_residual_bytes = 0
+    critical_groups = {"architecture", "rare_event_sentinels"}
+    critical_failures = tuple(
+        failure
+        for failure in failures
+        if critical_groups.intersection(failure.failed_groups)
+    )
+    if critical_failures:
+        critical_mask = build_union_repair_mask(
+            critical_failures, halo_um=halo_um, mpp=mpp
+        )
+        critical_residual = encode_exact_residual(original, critical_mask)
+        critical_repaired = apply_exact_residual(
+            decoded, critical_mask, critical_residual
+        )
+        critical_payload = encode_repair_packet(
+            critical_mask, critical_repaired, base=decoded
+        )
+        if byte_dominated(len(critical_payload)):
+            return fallback_result
+        critical_verification = _verify_changed(
+            verifier, original, decoded, critical_repaired, initial
+        )
+        if bool(getattr(critical_verification, "passed", critical_verification)):
+            return RepairResult(
+                "verified_repair",
+                "critical_exact_residual",
+                critical_repaired,
+                ByteBreakdown(repair=len(critical_payload)),
+                critical_payload,
+                mask_bytes=len(critical_mask.encoded),
+                residual_bytes=len(critical_payload) - len(critical_mask.encoded),
+            )
+        decoded = critical_repaired
+        initial = critical_verification
+        failures = _failures(initial)
+        if not failures:
+            return fallback_result
+        prefix_parts = (critical_payload,)
+        prefix_mask_bytes = len(critical_mask.encoded)
+        prefix_residual_bytes = len(critical_payload) - len(critical_mask.encoded)
+
+    mask = build_union_repair_mask(failures, halo_um=halo_um, mpp=mpp)
+
+    def with_prefix(part: bytes) -> bytes:
+        return (
+            encode_composite_repair_packet((*prefix_parts, part))
+            if prefix_parts
+            else part
         )
 
     accepted_overlay: RepairResult | None = None
@@ -120,7 +175,7 @@ def repair_until_verified(
     if not failed_groups or failed_groups <= {"visual", "nuclear_objects"}:
         stages.append(("transform_coefficient_overlay", 16, 1.0))
     for stage, count, step in stages:
-        stored = encode_transform_overlay(
+        overlay = encode_transform_overlay(
             original,
             decoded,
             mask,
@@ -128,9 +183,10 @@ def repair_until_verified(
             quantization_step=step,
             block_size=evidence_cell_size,
         )
+        stored = with_prefix(overlay)
         if byte_dominated(len(stored)):
             break
-        repaired = apply_transform_overlay(decoded, stored)
+        repaired = apply_transform_overlay(decoded, overlay)
         verification = _verify_changed(verifier, original, decoded, repaired, initial)
         if bool(getattr(verification, "passed", verification)):
             breakdown = ByteBreakdown(repair=len(stored))
@@ -140,14 +196,16 @@ def repair_until_verified(
                 repaired,
                 breakdown,
                 stored,
-                mask_bytes=len(mask.encoded),
-                residual_bytes=len(stored) - len(mask.encoded),
+                mask_bytes=prefix_mask_bytes + len(mask.encoded),
+                residual_bytes=prefix_residual_bytes,
+                overlay_bytes=len(overlay),
             )
             break
 
     residual = encode_exact_residual(original, mask)
     repaired = apply_exact_residual(decoded, mask, residual)
-    stored = encode_repair_packet(mask, repaired)
+    exact = encode_repair_packet(mask, repaired, base=decoded)
+    stored = with_prefix(exact)
     if (
         not byte_dominated(len(stored))
         and (accepted_overlay is None or len(stored) < len(accepted_overlay.payload))
@@ -159,11 +217,28 @@ def repair_until_verified(
         breakdown = ByteBreakdown(repair=len(stored))
         return RepairResult(
             "verified_repair",
-            "exact_pixel_residual",
+            (
+                "critical_exact_then_exact_pixel_residual"
+                if prefix_parts
+                else "exact_pixel_residual"
+            ),
             repaired,
             breakdown,
             stored,
-            mask_bytes=len(mask.encoded),
-            residual_bytes=len(stored) - len(mask.encoded),
+            mask_bytes=prefix_mask_bytes + len(mask.encoded),
+            residual_bytes=(
+                prefix_residual_bytes + len(exact) - len(mask.encoded)
+            ),
+        )
+    if accepted_overlay is not None and prefix_parts:
+        return RepairResult(
+            accepted_overlay.status,
+            f"critical_exact_then_{accepted_overlay.stage}",
+            accepted_overlay.decoded,
+            accepted_overlay.breakdown,
+            accepted_overlay.payload,
+            accepted_overlay.mask_bytes,
+            accepted_overlay.overlay_bytes,
+            accepted_overlay.residual_bytes,
         )
     return accepted_overlay or fallback_result
