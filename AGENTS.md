@@ -4,7 +4,7 @@
 - Use strict red-green-refactor for production behavior.
 - Commit verified tasks locally. Push only after `scripts/check_public_release.py`
   and the package validator pass.
-- Never commit WSI data, tiles, MC-V1 containers, private manifests, salts,
+- Never commit WSI data, tiles, MC-V1 or MC-V2 containers, private manifests, salts,
   identifiers, coordinates, source hashes, signed URLs, absolute local paths,
   detailed Parquet rows, or cells with fewer than five observations.
 - Do not weaken HE-V1, change partitions after outcomes, extrapolate sampled

@@ -42,3 +42,17 @@
 - The measured development slide still projects to roughly 8.9 wall-hours.
   The run therefore remains `resource_limited` and scientifically
   `not_evaluable`; the final holdout remains unopened.
+
+## 2026-08-08 — Breakthrough Generation 1 begins
+
+- MC-V2 is introduced as a new, versioned research container while MC-V1 remains
+  available for backward compatibility.
+- Scientific-fidelity gaps were corrected before further real-data work: the
+  final runner now defaults to the real frozen standard portfolio, candidate
+  selection uses complete verified bytes, repair is serializable and
+  certificate-bound, and a `complete` marker requires processed source data.
+- The compact evidence-allocation map and JPEG XL quadtree families were both
+  exercised on preliminary private development data. Neither passed the frozen
+  HE-V1 pathway with a byte advantage, so no positive or novelty claim is made.
+- The next Generation 1 step is development-only calibration using the declared
+  benign and harmful controls. Pilot, tuning, freeze, and final remain unopened.

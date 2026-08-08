@@ -67,6 +67,7 @@ def compare_acceptance(
 ) -> AcceptanceComparison:
     reference = compute_acceptance_evidence(source, physical_grid, contract)
     candidate = compute_acceptance_evidence(decoded, physical_grid, contract)
+    calibrated = dict(contract.absolute_group_bounds)
     tolerances = {
         "nuclear_objects": contract.nuclear_relative_tolerance,
         "architecture": contract.architecture_relative_tolerance,
@@ -74,9 +75,21 @@ def compare_acceptance(
         "visual": contract.visual_relative_tolerance,
     }
     candidate_groups = dict(candidate.groups)
-    distances = tuple(
-        (name, _relative_distance(values, candidate_groups[name]))
-        for name, values in reference.groups
-    )
-    failed = tuple(name for name, distance in distances if distance > tolerances[name])
-    return AcceptanceComparison(distances, failed)
+    distances = []
+    failed = []
+    for name, values in reference.groups:
+        if calibrated:
+            bounds = np.asarray(calibrated[name], dtype=np.float64)
+            first = np.asarray(values, dtype=np.float64)
+            second = np.asarray(candidate_groups[name], dtype=np.float64)
+            if bounds.shape != first.shape:
+                raise ValueError("calibrated bound shape does not match evidence group")
+            distance = float(np.max(np.abs(first - second) / bounds))
+            threshold = 1.0
+        else:
+            distance = _relative_distance(values, candidate_groups[name])
+            threshold = tolerances[name]
+        distances.append((name, distance))
+        if distance > threshold:
+            failed.append(name)
+    return AcceptanceComparison(tuple(distances), tuple(failed))

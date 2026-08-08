@@ -17,12 +17,13 @@ class EncodedCandidate:
     attestation: tuple[tuple[str, str], ...] = ()
     basis_id: str = ""
     entropy_model_id: str = ""
+    allocation_map: bytes = b""
 
     def __post_init__(self) -> None:
         if not self.codec_id or not self.profile_id:
             raise ValueError("codec and profile identifiers are required")
-        if self.breakdown.complete != len(self.payload):
-            raise ValueError("candidate breakdown must equal payload length")
+        if self.breakdown.complete != len(self.payload) + len(self.allocation_map):
+            raise ValueError("candidate breakdown must equal payload and allocation-map bytes")
 
     @property
     def complete_bytes(self) -> int:

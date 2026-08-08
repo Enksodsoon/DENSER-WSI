@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -64,3 +65,16 @@ def test_self_verifying_certificate_matches_public_schema() -> None:
     certificate = build_certificate(source_rgb(), accepted_candidate(), contract())
     schema = json.loads(Path("schemas/evidence_certificate.schema.json").read_text(encoding="utf-8"))
     Draft202012Validator(schema).validate(certificate.document())
+
+
+def test_certificate_binds_allocation_payload_and_repair_bytes() -> None:
+    candidate = accepted_candidate()
+    repair = b"repair-bytes"
+    decoded = decode_candidate(candidate.payload, candidate.allocation_map)
+    certificate = build_certificate(
+        source_rgb(), candidate, contract(), decoded_rgb=decoded, repair_payload=repair
+    )
+    assert certificate.packet_sha256 == hashlib.sha256(
+        candidate.allocation_map + candidate.payload + repair
+    ).hexdigest()
+    assert certificate.repair_region_hex == hashlib.sha256(repair).hexdigest()

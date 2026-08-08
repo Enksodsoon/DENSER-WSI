@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from denser.evidence.calibrate import calibrate_contract, verify_calibration
+from denser.evidence.calibrate import (
+    acceptance_contract_from_calibration,
+    calibrate_contract,
+    verify_calibration,
+)
 from denser.evidence.controls import CalibrationProfile, ControlPair
 
 
@@ -65,3 +69,31 @@ def test_all_required_challenges_can_freeze() -> None:
     audit = verify_calibration(record, challenges)
     assert audit.status == "calibrated"
     assert audit.missed_control_ids == ()
+
+
+def test_calibration_produces_frozen_absolute_group_bounds() -> None:
+    record = calibrate_contract(_benign_pairs(), _profile())
+    try:
+        acceptance_contract_from_calibration(record)
+    except ValueError as error:
+        assert "groups" in str(error)
+
+    complete_pairs = [
+        ControlPair(
+            f"complete-{index}",
+            f"tile-{index}",
+            "benign",
+            None,
+            tuple((name, (0.01 * index,)) for name in (
+                "nuclear_objects", "architecture", "rare_event_sentinels", "visual"
+            )),
+        )
+        for index in range(1, 7)
+    ]
+    complete = calibrate_contract(complete_pairs, _profile())
+    contract = acceptance_contract_from_calibration(complete)
+    assert contract.calibration_digest == complete.sha256
+    assert {name for name, _bounds in contract.absolute_group_bounds} == {
+        "nuclear_objects", "architecture", "rare_event_sentinels", "visual"
+    }
+    assert all(bound > 0 for _name, bounds in contract.absolute_group_bounds for bound in bounds)

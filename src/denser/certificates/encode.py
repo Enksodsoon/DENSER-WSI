@@ -29,6 +29,11 @@ def _contract_document(contract: AcceptanceContract) -> dict[str, object]:
         "architecture_relative_tolerance": contract.architecture_relative_tolerance,
         "sentinel_relative_tolerance": contract.sentinel_relative_tolerance,
         "visual_relative_tolerance": contract.visual_relative_tolerance,
+        "calibration_digest": contract.calibration_digest,
+        "absolute_group_bounds": [
+            {"name": name, "bounds": list(bounds)}
+            for name, bounds in contract.absolute_group_bounds
+        ],
     }
 
 
@@ -44,12 +49,16 @@ def _base_certificate(
     mode: str,
     quantization: float,
     grid: PhysicalGrid,
+    decoded_rgb: np.ndarray | None,
+    repair_payload: bytes,
 ) -> EvidenceCertificate:
     source = np.asarray(source_rgb)
-    if candidate.codec_id == SharedLosslessCodec.codec_id:
+    if decoded_rgb is not None:
+        decoded = np.asarray(decoded_rgb)
+    elif candidate.codec_id == SharedLosslessCodec.codec_id:
         decoded = SharedLosslessCodec().decode(candidate.payload, source.shape)
     else:
-        decoded = decode_candidate(candidate.payload)
+        decoded = decode_candidate(candidate.payload, candidate.allocation_map)
     if source.dtype != np.uint8 or source.shape != decoded.shape:
         raise ValueError("source and decoded candidate must be matching uint8 RGB arrays")
     reference = compute_acceptance_evidence(source, grid, contract)
@@ -66,9 +75,11 @@ def _base_certificate(
         reference_payload=payload,
         candidate_id=f"{candidate.codec_id}:{candidate.profile_id}",
         fallback_id=SharedLosslessCodec.profile_id,
-        repair_region_hex="",
+        repair_region_hex=hashlib.sha256(repair_payload).hexdigest() if repair_payload else "",
         decoded_evidence_sha256=decoded_evidence.sha256,
-        packet_sha256=hashlib.sha256(candidate.payload).hexdigest(),
+        packet_sha256=hashlib.sha256(
+            candidate.allocation_map + candidate.payload + repair_payload
+        ).hexdigest(),
         decoded_rgb_sha256=hashlib.sha256(decoded.tobytes(order="C")).hexdigest(),
         verification_status="encoder_verified",
         certificate_digest="",
@@ -83,6 +94,8 @@ def build_certificate(
     *,
     quantization: float = 1e-6,
     physical_grid: PhysicalGrid | None = None,
+    decoded_rgb: np.ndarray | None = None,
+    repair_payload: bytes = b"",
 ) -> EvidenceCertificate:
     return _base_certificate(
         source_rgb,
@@ -91,6 +104,8 @@ def build_certificate(
         mode="self_verifying",
         quantization=quantization,
         grid=physical_grid or PhysicalGrid(0.25, 0.25),
+        decoded_rgb=decoded_rgb,
+        repair_payload=repair_payload,
     )
 
 
@@ -100,6 +115,8 @@ def build_attested_digest_certificate(
     contract: AcceptanceContract,
     *,
     physical_grid: PhysicalGrid | None = None,
+    decoded_rgb: np.ndarray | None = None,
+    repair_payload: bytes = b"",
 ) -> EvidenceCertificate:
     return _base_certificate(
         source_rgb,
@@ -108,6 +125,8 @@ def build_attested_digest_certificate(
         mode="attested_digest",
         quantization=1e-6,
         grid=physical_grid or PhysicalGrid(0.25, 0.25),
+        decoded_rgb=decoded_rgb,
+        repair_payload=repair_payload,
     )
 
 

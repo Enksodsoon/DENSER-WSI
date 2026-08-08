@@ -49,18 +49,25 @@ def verify_certificate(
             "rare_event_sentinels": contract.sentinel_relative_tolerance,
             "visual": contract.visual_relative_tolerance,
         }
+        calibrated = dict(contract.absolute_group_bounds)
         if set(candidate_groups) != {name for name, _values in reference.groups}:
             return CertificateVerificationResult(False, False, "integrity:reference_groups")
         for name, quantized in reference.groups:
             observed = candidate_groups[name]
             if len(observed) != len(quantized):
                 return CertificateVerificationResult(False, False, "integrity:reference_shape")
-            for stored, value in zip(quantized, observed, strict=True):
+            for index, (stored, value) in enumerate(zip(quantized, observed, strict=True)):
                 reconstructed = stored * reference.quantization
-                allowed = (
-                    tolerance[name] * max(abs(reconstructed), 1e-6)
-                    + reference.max_absolute_error
-                )
+                if calibrated:
+                    bounds = calibrated[name]
+                    if len(bounds) != len(quantized):
+                        return CertificateVerificationResult(False, False, "integrity:calibrated_bounds")
+                    allowed = bounds[index] + reference.max_absolute_error
+                else:
+                    allowed = (
+                        tolerance[name] * max(abs(reconstructed), 1e-6)
+                        + reference.max_absolute_error
+                    )
                 if abs(float(value) - reconstructed) > allowed:
                     return CertificateVerificationResult(False, False, f"evidence:{name}")
     except (KeyError, TypeError, ValueError, OverflowError):

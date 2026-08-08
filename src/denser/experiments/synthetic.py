@@ -24,10 +24,11 @@ from denser.method.candidates import (
 from denser.orchestration.runner import PhaseRunner, SimulatedCrash
 from denser.repair.escalate import repair_until_verified
 from denser.repair.mask import RepairFailure
+from denser.repair.packet_v2 import apply_repair_packet
 from denser.synthetic.histology import SyntheticSlideSpec, generate_synthetic_slide
 
 
-_PACKET_HEADER = struct.Struct(">4sBIIII")
+_PACKET_HEADER = struct.Struct(">4sBIIIII")
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +89,7 @@ def _candidate_for(method: str, tile: np.ndarray, profile: CandidateProfile) -> 
 def _decoded(candidate: EncodedCandidate, shape: tuple[int, int, int]) -> np.ndarray:
     if candidate.codec_id == SharedLosslessCodec.codec_id:
         return SharedLosslessCodec().decode(candidate.payload, shape)
-    return decode_candidate(candidate.payload)
+    return decode_candidate(candidate.payload, candidate.allocation_map)
 
 
 def _packet(
@@ -101,23 +102,39 @@ def _packet(
 ) -> tuple[bytes, ByteBreakdown]:
     if certificate is None:
         certificate = build_certificate(tile, candidate, contract)
-    elif certificate.packet_sha256 != hashlib.sha256(candidate.payload).hexdigest():
+    elif certificate.packet_sha256 != hashlib.sha256(
+        candidate.allocation_map + candidate.payload + repair_trace
+    ).hexdigest():
         raise ValueError("prebuilt certificate does not match the candidate packet")
     cert_bytes = encode_certificate(certificate)
     reference_bytes = certificate.reference_payload.encoded_bytes if certificate.reference_payload else 0
     codec_kind = 0 if candidate.codec_id == SharedLosslessCodec.codec_id else 1
     header = _PACKET_HEADER.pack(
-        b"SVP1", codec_kind, len(candidate.payload), len(repair_trace), len(cert_bytes), len(method.encode("ascii"))
+        b"SVP2",
+        codec_kind,
+        len(candidate.allocation_map),
+        len(candidate.payload),
+        len(repair_trace),
+        len(cert_bytes),
+        len(method.encode("ascii")),
     )
     method_bytes = method.encode("ascii")
     fallback_signal = b"\x01" if codec_kind == 0 else b""
-    packet = header + method_bytes + fallback_signal + candidate.payload + repair_trace + cert_bytes
+    packet = (
+        header
+        + method_bytes
+        + fallback_signal
+        + candidate.allocation_map
+        + candidate.payload
+        + repair_trace
+        + cert_bytes
+    )
     breakdown = ByteBreakdown(
         payload=len(candidate.payload),
         repair=len(repair_trace),
         certificate=len(cert_bytes) - reference_bytes,
         reference_evidence=reference_bytes,
-        method_signaling=len(header) + len(method_bytes),
+        method_signaling=len(header) + len(method_bytes) + len(candidate.allocation_map),
         fallback_signaling=len(fallback_signal),
     )
     if breakdown.complete != len(packet):
@@ -128,17 +145,23 @@ def _packet(
 def _decode_packet(packet: bytes, shape: tuple[int, int, int]) -> np.ndarray:
     if len(packet) < _PACKET_HEADER.size:
         raise ValueError("synthetic packet is truncated")
-    magic, kind, payload_length, repair_length, cert_length, method_length = _PACKET_HEADER.unpack_from(packet)
-    if magic != b"SVP1":
+    magic, kind, allocation_length, payload_length, repair_length, cert_length, method_length = _PACKET_HEADER.unpack_from(packet)
+    if magic != b"SVP2":
         raise ValueError("synthetic packet identity is invalid")
     offset = _PACKET_HEADER.size + method_length + (1 if kind == 0 else 0)
-    expected = offset + payload_length + repair_length + cert_length
+    expected = offset + allocation_length + payload_length + repair_length + cert_length
     if expected != len(packet):
         raise ValueError("synthetic packet section lengths are invalid")
-    payload = packet[offset : offset + payload_length]
+    allocation_map = packet[offset : offset + allocation_length]
+    payload_offset = offset + allocation_length
+    payload = packet[payload_offset : payload_offset + payload_length]
     if kind == 0:
-        return SharedLosslessCodec().decode(payload, shape)
-    return decode_candidate(payload)
+        decoded = SharedLosslessCodec().decode(payload, shape)
+    else:
+        decoded = decode_candidate(payload, allocation_map)
+    repair_offset = payload_offset + payload_length
+    repair_payload = packet[repair_offset : repair_offset + repair_length]
+    return apply_repair_packet(decoded, repair_payload) if repair_payload else decoded
 
 
 def _exercise_resume(root: Path) -> bool:
@@ -200,9 +223,9 @@ def run_synthetic_validation(config: SyntheticValidationConfig) -> SyntheticVali
                             mpp=spec.mpp,
                         )
                         repair_exercised = repair.status == "verified_repair"
-                        repair_trace = (
-                            f"{repair.stage}:{repair.mask_bytes}:{repair.overlay_bytes}:{repair.residual_bytes}"
-                        ).encode("ascii")
+                        # The repair probe validates the real serializable repair path,
+                        # but is not attached to the independently encoded candidate.
+                        repair_trace = b""
                     packet, breakdown = _packet(method, tile, candidate, contract, repair_trace)
                     writer.add_tile(address, packet, breakdown)
                     if slide_number == 0 and method == "standard":

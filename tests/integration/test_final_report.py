@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from jsonschema import Draft202012Validator
 
 from denser.analysis.report import FinalReportInputs, build_final_report, write_final_report
@@ -42,3 +44,9 @@ def test_completion_separates_execution_from_scientific_outcome(tmp_path: Path) 
     document = json.loads((tmp_path / "AUTONOMOUS_RUN_COMPLETE.json").read_text(encoding="utf-8"))
     Draft202012Validator(schema).validate(document)
     assert marker.artifact_digest == document["artifact_digest"]
+
+
+def test_completion_cannot_be_complete_without_processed_source_data() -> None:
+    inputs = replace(fixture_inputs_with_failures(), execution_status="complete", failed_slides_count=0)
+    with pytest.raises(ValueError, match="source data"):
+        build_final_report(inputs)

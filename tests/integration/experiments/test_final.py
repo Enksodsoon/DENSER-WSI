@@ -6,8 +6,8 @@ import time
 
 import numpy as np
 
-import denser.experiments.final as final_module
-import denser.experiments.synthetic as synthetic_module
+import denser.experiments.candidate_selection as selection_module
+from denser.codecs.lossless import SharedLosslessCodec
 from denser.data.manifest import PartitionManifest, SlideRecord
 from denser.experiments.final import (
     FinalHoldoutConfig,
@@ -25,6 +25,14 @@ def freeze_context() -> FreezeContext:
         "DENSER-P3", "1" * 64, (("jpeg", (70.0,)),), (("visual", 1.0),),
         "2" * 64, "3" * 64, (9,), 1,
     )
+
+
+def lossless_standard(tile, ladder):  # type: ignore[no-untyped-def]
+    return [SharedLosslessCodec().encode(tile)]
+
+
+def no_quadtree(tile, sensitivity):  # type: ignore[no-untyped-def]
+    return []
 
 
 def test_final_encodes_every_level0_tile_once(tmp_path: Path) -> None:
@@ -47,7 +55,15 @@ def test_final_encodes_every_level0_tile_once(tmp_path: Path) -> None:
     manifest = PartitionManifest("MC-V1-manifest-1", 9, (row,), "e" * 64)
     context = freeze_context()
     result = run_final_holdout(
-        FinalHoldoutConfig(tmp_path, (slide,), context), manifest, create_freeze_record(context)
+        FinalHoldoutConfig(
+            tmp_path,
+            (slide,),
+            context,
+            standard_builder=lossless_standard,
+            quadtree_builder=no_quadtree,
+        ),
+        manifest,
+        create_freeze_record(context),
     )
     expected = set(iter_level0_grid(1025, 513, 512))
     assert result.encoded_addresses == expected
@@ -59,21 +75,26 @@ def test_final_encodes_every_level0_tile_once(tmp_path: Path) -> None:
 
 
 def test_final_forbids_sample_extrapolation(tmp_path: Path) -> None:
-    config = FinalHoldoutConfig(tmp_path, (), freeze_context())
+    config = FinalHoldoutConfig(
+        tmp_path,
+        (),
+        freeze_context(),
+        standard_builder=lossless_standard,
+        quadtree_builder=no_quadtree,
+    )
     assert not config.sampled_tile_extrapolation_for_primary_endpoint_allowed
 
 
-def test_final_builds_one_certificate_per_accepted_tile_method(tmp_path: Path, monkeypatch) -> None:
+def test_final_builds_one_certificate_per_candidate_and_fallback(tmp_path: Path, monkeypatch) -> None:
     calls = 0
-    real_build = final_module.build_certificate
+    real_build = selection_module.build_certificate
 
     def counted_build(*args, **kwargs):  # type: ignore[no-untyped-def]
         nonlocal calls
         calls += 1
         return real_build(*args, **kwargs)
 
-    monkeypatch.setattr(final_module, "build_certificate", counted_build)
-    monkeypatch.setattr(synthetic_module, "build_certificate", counted_build)
+    monkeypatch.setattr(selection_module, "build_certificate", counted_build)
     slide = FinalSlideInput(
         "one-tile",
         8,
@@ -85,6 +106,14 @@ def test_final_builds_one_certificate_per_accepted_tile_method(tmp_path: Path, m
     manifest = PartitionManifest("MC-V1-manifest-1", 9, (row,), "e" * 64)
     context = freeze_context()
     run_final_holdout(
-        FinalHoldoutConfig(tmp_path, (slide,), context), manifest, create_freeze_record(context)
+        FinalHoldoutConfig(
+            tmp_path,
+            (slide,),
+            context,
+            standard_builder=lossless_standard,
+            quadtree_builder=no_quadtree,
+        ),
+        manifest,
+        create_freeze_record(context),
     )
-    assert calls == 3
+    assert calls == 10

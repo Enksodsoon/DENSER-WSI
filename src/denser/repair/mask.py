@@ -72,6 +72,33 @@ def _encode_spans(pixels: np.ndarray) -> bytes:
     )
 
 
+def decode_repair_mask(payload: bytes) -> RepairMask:
+    minimum = _HEADER.size + 4
+    if len(payload) < minimum:
+        raise ValueError("repair mask is truncated")
+    magic, height, width = _HEADER.unpack_from(payload)
+    span_count = struct.unpack_from(">I", payload, _HEADER.size)[0]
+    if magic != b"RMV1" or min(height, width) <= 0:
+        raise ValueError("repair-mask header is invalid")
+    if len(payload) != minimum + span_count * _SPAN.size:
+        raise ValueError("repair-mask length is invalid")
+    pixels = np.zeros((height, width), dtype=np.bool_)
+    previous = (-1, -1, -1)
+    for index in range(span_count):
+        span = _SPAN.unpack_from(payload, minimum + index * _SPAN.size)
+        y, x, length = span
+        if length <= 0 or y >= height or x + length > width or span <= previous:
+            raise ValueError("repair-mask span is invalid")
+        if np.any(pixels[y, x : x + length]):
+            raise ValueError("repair-mask spans overlap")
+        pixels[y, x : x + length] = True
+        previous = span
+    if not np.any(pixels) or _encode_spans(pixels) != payload:
+        raise ValueError("repair-mask encoding is noncanonical")
+    pixels.flags.writeable = False
+    return RepairMask(pixels, payload)
+
+
 def build_union_repair_mask(
     failures: Iterable[RepairFailure], halo_um: float, mpp: float
 ) -> RepairMask:
@@ -96,4 +123,3 @@ def build_union_repair_mask(
         pixels[y0:y1, x0:x1] = True
     pixels.flags.writeable = False
     return RepairMask(pixels=pixels, encoded=_encode_spans(pixels))
-

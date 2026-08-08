@@ -10,6 +10,7 @@ import numpy as np
 from denser.codecs.lossless import SharedLosslessCodec
 from denser.core.models import ByteBreakdown
 from denser.repair.mask import RepairFailure, build_union_repair_mask
+from denser.repair.packet_v2 import encode_repair_packet
 from denser.repair.residual import apply_exact_residual, encode_exact_residual
 
 
@@ -23,6 +24,7 @@ class RepairResult:
     stage: str
     decoded: np.ndarray
     breakdown: ByteBreakdown
+    payload: bytes = b""
     mask_bytes: int = 0
     overlay_bytes: int = 0
     residual_bytes: int = 0
@@ -85,10 +87,8 @@ def repair_until_verified(
         attempted_overlay_bytes += len(packet)
         verification = verifier.verify(original, repaired)
         if bool(getattr(verification, "passed", verification)):
-            breakdown = ByteBreakdown(
-                repair=len(mask.encoded) + attempted_overlay_bytes,
-                method_signaling=1,
-            )
+            stored = encode_repair_packet(mask, repaired)
+            breakdown = ByteBreakdown(repair=len(stored))
             if breakdown.complete >= fallback_breakdown.complete:
                 return fallback_result
             return RepairResult(
@@ -96,27 +96,25 @@ def repair_until_verified(
                 stage,
                 repaired,
                 breakdown,
+                stored,
                 mask_bytes=len(mask.encoded),
-                overlay_bytes=attempted_overlay_bytes,
+                residual_bytes=len(stored) - len(mask.encoded),
             )
 
     residual = encode_exact_residual(original, mask)
     repaired = apply_exact_residual(decoded, mask, residual)
     verification = verifier.verify(original, repaired)
     if bool(getattr(verification, "passed", verification)):
-        breakdown = ByteBreakdown(
-            repair=len(mask.encoded) + attempted_overlay_bytes + len(residual),
-            method_signaling=1,
-        )
+        stored = encode_repair_packet(mask, repaired)
+        breakdown = ByteBreakdown(repair=len(stored))
         if breakdown.complete < fallback_breakdown.complete:
             return RepairResult(
                 "verified_repair",
                 "exact_pixel_residual",
                 repaired,
                 breakdown,
+                stored,
                 mask_bytes=len(mask.encoded),
-                overlay_bytes=attempted_overlay_bytes,
-                residual_bytes=len(residual),
+                residual_bytes=len(stored) - len(mask.encoded),
             )
     return fallback_result
-

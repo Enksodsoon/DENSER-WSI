@@ -14,6 +14,7 @@ from denser.evidence.controls import (
     ControlPair,
     GroupStandardization,
 )
+from denser.evidence.types import AcceptanceContract
 
 
 def _finite_quantile(values: list[float], probability: float) -> float:
@@ -115,3 +116,24 @@ def verify_calibration(
         raise ValueError("challenge set contains undeclared controls")
     status = "calibrated" if not missed and set(detected) == required else "not_evaluable"
     return CalibrationAudit(status, tuple(detected), tuple(missed), tuple(scores))
+
+
+def acceptance_contract_from_calibration(record: CalibrationRecord) -> AcceptanceContract:
+    required = {"nuclear_objects", "architecture", "rare_event_sentinels", "visual"}
+    standardization = {item.group: item for item in record.standardization}
+    thresholds = dict(record.thresholds)
+    if set(standardization) != required or set(thresholds) != required:
+        raise ValueError("calibration record does not contain all HE-V1 acceptance groups")
+    bounds = []
+    for name in sorted(required):
+        item = standardization[name]
+        threshold = thresholds[name]
+        values = tuple(
+            max(1e-6, abs(center) + threshold * scale)
+            for center, scale in zip(item.centers, item.scales, strict=True)
+        )
+        bounds.append((name, values))
+    return AcceptanceContract(
+        calibration_digest=record.sha256,
+        absolute_group_bounds=tuple(bounds),
+    )

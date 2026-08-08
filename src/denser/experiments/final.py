@@ -7,17 +7,22 @@ from typing import Callable, Iterator
 
 import numpy as np
 
-from denser.certificates.encode import build_certificate
-from denser.certificates.verify import verify_certificate
+from denser.codecs.base import EncodedCandidate
 from denser.codecs.lossless import SharedLosslessCodec
-from denser.container.mcv1 import McV1Reader, McV1Writer
+from denser.codecs.registry import CodecRegistry, build_default_registry
+from denser.codecs.quadtree import build_jpegxl_quadtree_candidates
+from denser.codecs.standard import StandardLadder, build_standard_candidates
+from denser.container.mcv2 import McV2Reader, McV2Writer
 from denser.core.errors import PartitionViolation
 from denser.core.models import TileAddress
 from denser.data.manifest import PartitionManifest
-from denser.evidence.types import AcceptanceContract
+from denser.evidence.types import AcceptanceContract, PhysicalGrid
+from denser.experiments.candidate_selection import (
+    decode_and_verify_tile_packet,
+    select_smallest_accepted_candidate,
+)
 from denser.experiments.freeze import FreezeContext, FreezeRecord, verify_freeze_record
-from denser.experiments.synthetic import _candidate_for, _decode_packet, _decoded, _packet
-from denser.method.candidates import CandidateProfile
+from denser.method.candidates import CandidateProfile, build_denser_candidates, build_uniform_candidates
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +32,7 @@ class FinalSlideInput:
     height: int
     tile_size: int
     read_tile: Callable[[TileAddress], np.ndarray]
+    mpp: float = 0.25
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +44,11 @@ class FinalHoldoutConfig:
     methods: tuple[str, ...] = ("standard", "uniform", "denser")
     candidate_steps: tuple[float, ...] = (1.0, 2.0, 4.0)
     cpu_workers: int = 6
+    standard_ladder: StandardLadder = StandardLadder()
+    standard_builder: Callable[[np.ndarray, StandardLadder], list[EncodedCandidate]] = build_standard_candidates
+    quadtree_builder: Callable[[np.ndarray, np.ndarray], list[EncodedCandidate]] = build_jpegxl_quadtree_candidates
+    codec_registry: CodecRegistry | None = None
+    acceptance_contract: AcceptanceContract = AcceptanceContract()
 
     def __post_init__(self) -> None:
         if self.sampled_tile_extrapolation_for_primary_endpoint_allowed:
@@ -88,7 +99,8 @@ def run_final_holdout(
     if len(config.slides) != freeze.expected_final_slide_count:
         raise PartitionViolation("bound final slide count differs from the freeze")
     profile = CandidateProfile(config.candidate_steps)
-    contract = AcceptanceContract(visual_relative_tolerance=1.0)
+    contract = config.acceptance_contract
+    registry = config.codec_registry or build_default_registry()
     counts: dict[tuple[str, TileAddress], int] = {}
     encoded_addresses: set[TileAddress] = set()
     containers: list[FinalContainerResult] = []
@@ -101,28 +113,38 @@ def run_final_holdout(
         verify_freeze_record(freeze, config.freeze_context)
         addresses = tuple(iter_level0_grid(slide.width, slide.height, slide.tile_size))
         for method in config.methods:
-            path = root / f"final-{slide_number:03d}.{method}.mcv1"
-            writer = McV1Writer(path)
+            path = root / f"final-{slide_number:03d}.{method}.mcv2"
+            writer = McV2Writer(path)
 
             def encode_address(address: TileAddress):  # type: ignore[no-untyped-def]
-                violation = 0
                 tile = np.asarray(slide.read_tile(address))
                 expected_shape = (address.height, address.width, 3)
                 if tile.dtype != np.uint8 or tile.shape != expected_shape:
                     raise ValueError("final tile loader returned invalid pixels")
-                candidate = _candidate_for(method, tile, profile)
-                decoded = _decoded(candidate, expected_shape)
-                certificate = build_certificate(tile, candidate, contract)
-                if not verify_certificate(decoded, certificate, contract).passed:
-                    candidate = SharedLosslessCodec().encode(tile)
-                    decoded = _decoded(candidate, expected_shape)
-                    certificate = build_certificate(tile, candidate, contract)
-                    if not verify_certificate(decoded, certificate, contract).passed:
-                        violation = 1
-                packet, breakdown = _packet(
-                    method, tile, candidate, contract, b"", certificate=certificate
+                if method == "standard":
+                    candidates = config.standard_builder(tile, config.standard_ladder)
+                elif method == "uniform":
+                    candidates = build_uniform_candidates(tile, profile)
+                else:
+                    values = tile.astype(np.float64)
+                    sensitivity = np.empty_like(values)
+                    for channel in range(3):
+                        if min(values.shape[:2]) < 2:
+                            sensitivity[:, :, channel] = 1.0
+                        else:
+                            gy, gx = np.gradient(values[:, :, channel])
+                            sensitivity[:, :, channel] = np.hypot(gx, gy) + 1.0
+                    candidates = build_denser_candidates(tile, sensitivity, profile)
+                    candidates.extend(config.quadtree_builder(tile, sensitivity))
+                selected = select_smallest_accepted_candidate(
+                    tile,
+                    candidates,
+                    registry,
+                    contract,
+                    PhysicalGrid(slide.mpp, slide.mpp),
+                    cell_size_px=max(1, round(8.0 / slide.mpp)),
                 )
-                return address, packet, breakdown, violation
+                return address, selected.packet, selected.breakdown, 0
 
             try:
                 tile_workers = max(1, min(3, config.cpu_workers // 2))
@@ -138,11 +160,16 @@ def run_final_holdout(
             except Exception:
                 writer.abort()
                 raise
-            reader = McV1Reader(path)
+            reader = McV2Reader(path)
             ledger = reader.byte_ledger()
             ledgers_match &= ledger.complete_bytes == path.stat().st_size
             for address in (addresses[0], addresses[-1]):
-                tile = _decode_packet(reader.read_tile(address), (address.height, address.width, 3))
+                tile = decode_and_verify_tile_packet(
+                    reader.read_tile(address),
+                    (address.height, address.width, 3),
+                    registry,
+                    contract,
+                )
                 independent &= tile.shape == (address.height, address.width, 3)
             containers.append(FinalContainerResult(method, path, ledger.complete_bytes, len(addresses)))
     return FinalHoldoutResult(

@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from denser.governance.public_release import PublicReleasePolicy, check_public_release
 
 
@@ -16,11 +18,12 @@ def test_clean_source_tree_is_public_safe(tmp_path: Path) -> None:
     assert report.findings == ()
 
 
-def test_wsi_payload_is_rejected_by_extension(tmp_path: Path) -> None:
-    (tmp_path / "slide.svs").write_bytes(b"payload")
+@pytest.mark.parametrize("name", ["slide.svs", "result.mcv2"])
+def test_wsi_payload_is_rejected_by_extension(tmp_path: Path, name: str) -> None:
+    (tmp_path / name).write_bytes(b"payload")
     report = check_public_release(tmp_path, PublicReleasePolicy())
     assert [(item.code, item.path) for item in report.findings] == [
-        ("forbidden_extension", "slide.svs")
+        ("forbidden_extension", name)
     ]
 
 

@@ -47,6 +47,17 @@ class AcceptanceContract:
     architecture_relative_tolerance: float = 0.12
     sentinel_relative_tolerance: float = 0.01
     visual_relative_tolerance: float = 0.20
+    calibration_digest: str = ""
+    absolute_group_bounds: tuple[tuple[str, tuple[float, ...]], ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.calibration_digest and len(self.calibration_digest) != 64:
+            raise ValueError("calibration digest must be a SHA-256")
+        names = [name for name, _bounds in self.absolute_group_bounds]
+        if len(names) != len(set(names)):
+            raise ValueError("calibrated acceptance groups must be unique")
+        if any(not bounds or any(value <= 0 for value in bounds) for _name, bounds in self.absolute_group_bounds):
+            raise ValueError("calibrated acceptance bounds must be positive")
 
 
 @dataclass(frozen=True, slots=True)

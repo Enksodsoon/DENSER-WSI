@@ -10,14 +10,15 @@ import numpy as np
 
 from denser.codecs.base import EncodedCandidate
 from denser.core.models import ByteBreakdown
-from denser.method.quantize import sensitivity_weighted_steps, uniform_quantize
+from denser.method.allocation_map_v2 import EvidenceAllocationMapV2, build_evidence_allocation_map
+from denser.method.quantize import uniform_quantize
 from denser.method.transform import forward_transform, inverse_transform
 
 
 MAGIC = b"DNQ1"
 HEADER = struct.Struct(">4sHHHHBBfII32s")
-BASIS_ID = "block-dct8-rgb-v1"
-ENTROPY_MODEL_ID = "int32-zlib-fixed-level6-v2"
+BASIS_ID = "block-dct8-rgb-eam-v2"
+ENTROPY_MODEL_ID = "int32-zlib-fixed-level6-v3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,15 +82,49 @@ def _packet(
     return header + compressed
 
 
-def _candidate(payload: bytes, profile_id: str, profile: CandidateProfile) -> EncodedCandidate:
+def _candidate(
+    payload: bytes,
+    profile_id: str,
+    profile: CandidateProfile,
+    allocation_map: bytes = b"",
+    codec_id: str = "denser-transform",
+) -> EncodedCandidate:
     return EncodedCandidate(
-        codec_id="denser-transform",
+        codec_id=codec_id,
         profile_id=profile_id,
         payload=payload,
-        breakdown=ByteBreakdown(payload=len(payload)),
+        breakdown=ByteBreakdown(payload=len(payload), method_signaling=len(allocation_map)),
         basis_id=profile.basis_id,
         entropy_model_id=profile.entropy_model_id,
+        allocation_map=allocation_map,
     )
+
+
+def _adaptive_packet(
+    rgb: np.ndarray,
+    coefficients: np.ndarray,
+    base_step: float,
+    allocation: EvidenceAllocationMapV2,
+) -> bytes:
+    height, width, channels = rgb.shape
+    padded_height, padded_width, _ = coefficients.shape
+    steps = allocation.coefficient_steps(base_step, coefficients.shape)
+    quantized = np.rint(coefficients / steps).astype(np.int32)
+    raw = quantized.astype(">i4", copy=False).tobytes(order="C")
+    compressed = _compress(raw)
+    return HEADER.pack(
+        MAGIC,
+        height,
+        width,
+        padded_height,
+        padded_width,
+        channels,
+        2,
+        base_step,
+        coefficients.size,
+        len(compressed),
+        hashlib.sha256(raw).digest(),
+    ) + compressed
 
 
 def build_uniform_candidates(
@@ -117,26 +152,23 @@ def build_denser_candidates(
     if sensitivity_values.shape != pixels.shape:
         raise ValueError("sensitivity field must match RGB shape")
     coefficients, _ = forward_transform(pixels)
-    sensitivity_coefficients, _ = forward_transform(np.abs(sensitivity_values))
-    weights = np.abs(sensitivity_coefficients) + 1e-12
+    allocation = build_evidence_allocation_map(np.abs(sensitivity_values))
+    allocation_bytes = allocation.encode()
 
     def build(step: float) -> EncodedCandidate:
         return _candidate(
-            _packet(
-                pixels,
-                coefficients,
-                step,
-                sensitivity_weighted_steps(weights, step, profile.trust_region_ratio),
-            ),
+            _adaptive_packet(pixels, coefficients, step, allocation),
             f"denser-q{step:g}",
             profile,
+            allocation_bytes,
+            "denser-eam-dct-v2",
         )
 
     with ThreadPoolExecutor(max_workers=min(2, len(profile.quantization_steps))) as pool:
         return list(pool.map(build, profile.quantization_steps))
 
 
-def decode_transform_candidate(payload: bytes) -> np.ndarray:
+def decode_transform_candidate(payload: bytes, allocation_map: bytes = b"") -> np.ndarray:
     if len(payload) < HEADER.size:
         raise ValueError("transform packet is truncated")
     (
@@ -152,7 +184,7 @@ def decode_transform_candidate(payload: bytes) -> np.ndarray:
         compressed_length,
         digest,
     ) = HEADER.unpack_from(payload)
-    if magic != MAGIC or channels != 3 or mode not in (0, 1):
+    if magic != MAGIC or channels != 3 or mode not in (0, 1, 2):
         raise ValueError("transform packet header is invalid")
     compressed = payload[HEADER.size:]
     if len(compressed) != compressed_length:
@@ -172,13 +204,21 @@ def decode_transform_candidate(payload: bytes) -> np.ndarray:
             raise ValueError("uniform transform packet layout is invalid")
         steps: float | np.ndarray = float(base_step)
         quantized_raw = raw
-    else:
+    elif mode == 1:
         if step_count != coefficient_count or len(raw) != coefficient_count * 8:
             raise ValueError("DENSER transform packet layout is invalid")
         steps = np.frombuffer(raw[: coefficient_count * 4], dtype=">f4").astype(np.float64).reshape(
             (padded_height, padded_width, channels)
         )
         quantized_raw = raw[coefficient_count * 4 :]
+    else:
+        if step_count != coefficient_count or len(raw) != coefficient_count * 4:
+            raise ValueError("MC-V2 transform packet layout is invalid")
+        if not allocation_map:
+            raise ValueError("MC-V2 transform packet requires an allocation map")
+        allocation = EvidenceAllocationMapV2.decode(allocation_map)
+        steps = allocation.coefficient_steps(float(base_step), (padded_height, padded_width, channels))
+        quantized_raw = raw
     quantized = np.frombuffer(quantized_raw, dtype=">i4").astype(np.float64).reshape(
         (padded_height, padded_width, channels)
     )
@@ -186,6 +226,6 @@ def decode_transform_candidate(payload: bytes) -> np.ndarray:
     return inverse_transform(coefficients, (height, width))
 
 
-def decode_candidate(payload: bytes) -> np.ndarray:
+def decode_candidate(payload: bytes, allocation_map: bytes = b"") -> np.ndarray:
     """Decode either matched transform portfolio using its self-describing packet."""
-    return decode_transform_candidate(payload)
+    return decode_transform_candidate(payload, allocation_map)

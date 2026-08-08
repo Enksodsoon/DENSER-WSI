@@ -6,6 +6,7 @@ from denser.method.candidates import (
     CandidateProfile,
     build_denser_candidates,
     build_uniform_candidates,
+    decode_candidate,
     decode_transform_candidate,
 )
 
@@ -43,8 +44,12 @@ def test_denser_weighting_changes_packet_but_not_coder_identity() -> None:
     assert uniform.payload != denser.payload
     assert uniform.basis_id == denser.basis_id
     assert uniform.entropy_model_id == denser.entropy_model_id
+    assert uniform.allocation_map == b""
+    assert denser.allocation_map
+    assert len(denser.allocation_map) < _rgb().size * 4 // 10
+    assert decode_candidate(denser.payload, denser.allocation_map).shape == _rgb().shape
 
 
 def test_matched_entropy_model_uses_versioned_fixed_level_six() -> None:
     candidate = build_uniform_candidates(_rgb(), CandidateProfile((2.0,)))[0]
-    assert candidate.entropy_model_id == "int32-zlib-fixed-level6-v2"
+    assert candidate.entropy_model_id == "int32-zlib-fixed-level6-v3"

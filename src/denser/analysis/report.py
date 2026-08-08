@@ -76,6 +76,8 @@ class FinalReportBundle:
 
 
 def build_final_report(inputs: FinalReportInputs) -> FinalReportBundle:
+    if inputs.execution_status == "complete" and inputs.evaluable_slides == 0:
+        raise ValueError("complete execution requires processed source data")
     report_document = {
         "execution_status": inputs.execution_status,
         "scientific_outcome": inputs.scientific_outcome,
@@ -165,6 +167,7 @@ def write_final_report(output_root: Path, inputs: FinalReportInputs) -> FinalRep
                 ("libjxl", "0.12.0"),
                 ("libavif", "1.4.1"),
                 ("zstd", "1.5.7"),
+                ("python-zstandard", "0.25.0"),
             )
         ],
     }

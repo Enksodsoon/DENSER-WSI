@@ -15,9 +15,10 @@ from denser.codecs.lossless import SharedLosslessCodec
 from denser.container.mcv1 import McV1Reader
 from denser.core.models import TileAddress
 from denser.method.candidates import decode_candidate
+from denser.repair.packet_v2 import apply_repair_packet
 
 
-_PACKET_HEADER = struct.Struct(">4sBIIII")
+_PACKET_HEADER = struct.Struct(">4sBIIIII")
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,23 +64,32 @@ def get_tile(
     packet = McV1Reader(Path(path)).read_tile(address)
     if len(packet) < _PACKET_HEADER.size:
         raise ValueError("adapter packet is truncated")
-    magic, kind, payload_length, repair_length, cert_length, method_length = _PACKET_HEADER.unpack_from(packet)
-    if magic != b"SVP1" or kind not in (0, 1):
+    magic, kind, allocation_length, payload_length, repair_length, cert_length, method_length = _PACKET_HEADER.unpack_from(packet)
+    if magic != b"SVP2" or kind not in (0, 1):
         raise ValueError("adapter packet identity is unsupported")
     offset = _PACKET_HEADER.size + method_length + (1 if kind == 0 else 0)
-    expected = offset + payload_length + repair_length + cert_length
+    expected = offset + allocation_length + payload_length + repair_length + cert_length
     if expected != len(packet):
         raise ValueError("adapter packet layout is invalid")
-    candidate_payload = packet[offset : offset + payload_length]
+    allocation_map = packet[offset : offset + allocation_length]
+    payload_offset = offset + allocation_length
+    candidate_payload = packet[payload_offset : payload_offset + payload_length]
+    repair_offset = payload_offset + payload_length
+    repair_payload = packet[repair_offset : repair_offset + repair_length]
     certificate_payload = packet[-cert_length:]
     if kind == 0:
         rgb = SharedLosslessCodec().decode(
             candidate_payload, (address.height, address.width, 3)
         )
     else:
-        rgb = decode_candidate(candidate_payload)
+        rgb = decode_candidate(candidate_payload, allocation_map)
+    if repair_payload:
+        rgb = apply_repair_packet(rgb, repair_payload)
     certificate = decode_certificate(certificate_payload)
-    packet_bound = hashlib.sha256(candidate_payload).hexdigest() == certificate.packet_sha256
+    packet_bound = (
+        hashlib.sha256(allocation_map + candidate_payload + repair_payload).hexdigest()
+        == certificate.packet_sha256
+    )
     verification = verify_certificate(rgb, certificate, selected_contract.acceptance)
     passed = packet_bound and verification.passed
     if selected_contract.require_self_verifying_certificate:
