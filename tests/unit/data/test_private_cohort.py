@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -151,3 +152,53 @@ def test_verified_partition_binding_rejects_same_size_corruption(tmp_path: Path)
     source.write_bytes(b"wrong")
     with pytest.raises(RuntimeError, match="integrity"):
         bind_verified_partition_sources(manifest, layout, "development", expected_count=1)
+
+
+def test_partition_downloader_bounds_distinct_file_concurrency(tmp_path: Path) -> None:
+    repo, run = tmp_path / "repo", tmp_path / "run"
+    repo.mkdir()
+    layout = RunLayout(repo, run)
+    layout.ensure()
+    payload = b"slide"
+    md5 = hashlib.md5(payload, usedforsecurity=False).hexdigest()
+    rows = [
+        {
+            "access": "open", "case_id": f"case-{index}",
+            "file_name": f"slide-{index}.svs", "file_size": len(payload),
+            "file_uuid": f"file-{index}", "md5": md5,
+            "partition": "development", "project_id": f"TCGA-{index}",
+            "research_id": f"RS-{index}", "source_url": "https://example.invalid",
+        }
+        for index in range(2)
+    ]
+    manifest = layout.resolve("manifests", "selected.private.json")
+    manifest.write_text(json.dumps({"rows": rows}), encoding="utf-8")
+    barrier = threading.Barrier(2)
+    active = 0
+    peak = 0
+    guard = threading.Lock()
+
+    def concurrent_download(record, destination):  # type: ignore[no-untyped-def]
+        nonlocal active, peak
+        with guard:
+            active += 1
+            peak = max(peak, active)
+        barrier.wait(timeout=5)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload)
+        with guard:
+            active -= 1
+        return DownloadRecord(
+            record.research_id, str(destination), len(payload), md5,
+            hashlib.sha256(payload).hexdigest(), True,
+        )
+
+    result = download_manifest_partition(
+        manifest,
+        layout,
+        "development",
+        max_concurrent_files=2,
+        download_fn=concurrent_download,
+    )
+    assert len(result) == 2
+    assert peak == 2

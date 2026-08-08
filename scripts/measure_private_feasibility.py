@@ -36,6 +36,7 @@ from denser.method.candidates import (
 from denser.orchestration.breakthrough import FeasibilityEvidence, evaluate_generation_gate
 from denser.orchestration.runtime_projection import (
     DevelopmentTimingSample,
+    deterministic_sample_indices,
     project_confirmatory_runtime,
 )
 
@@ -87,23 +88,29 @@ def _physical_grid(slide: object) -> PhysicalGrid:
     return grid
 
 
-def _sample_tiles(slide: object, count: int, search_grid: int) -> list[np.ndarray]:
+def _sample_tiles(
+    slide: object, count: int, *, seed: int, slide_ordinal: int
+) -> list[np.ndarray]:
     width, height = slide.dimensions  # type: ignore[attr-defined]
     size = 512
-    candidates: list[tuple[float, int, int, np.ndarray]] = []
-    for y in np.linspace(0, max(0, height - size), search_grid, dtype=int):
-        for x in np.linspace(0, max(0, width - size), search_grid, dtype=int):
-            rgb = np.asarray(
-                slide.read_region((int(x), int(y)), 0, (size, size)).convert("RGB"),  # type: ignore[attr-defined]
+    columns = math.ceil(width / size)
+    rows = math.ceil(height / size)
+    indices = deterministic_sample_indices(
+        columns * rows, count, seed=seed, slide_ordinal=slide_ordinal
+    )
+    sampled = []
+    for index in indices:
+        tile_y, tile_x = divmod(index, columns)
+        x, y = tile_x * size, tile_y * size
+        tile_width = min(size, width - x)
+        tile_height = min(size, height - y)
+        sampled.append(
+            np.asarray(
+                slide.read_region((x, y), 0, (tile_width, tile_height)).convert("RGB"),  # type: ignore[attr-defined]
                 dtype=np.uint8,
             )
-            intensity = rgb.astype(np.float64).mean(axis=2)
-            tissue = float(np.mean((intensity < 240) & (intensity > 20)))
-            candidates.append((tissue, int(y), int(x), rgb))
-    candidates.sort(key=lambda row: (-row[0], row[1], row[2]))
-    if len(candidates) < count:
-        raise RuntimeError("development slide does not contain enough benchmark candidates")
-    return [row[3] for row in candidates[:count]]
+        )
+    return sampled
 
 
 def _sensitivity(rgb: np.ndarray) -> np.ndarray:
@@ -163,13 +170,13 @@ def main() -> int:
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--image-digest", required=True)
     parser.add_argument("--code-commit", required=True)
-    parser.add_argument("--tiles-per-slide", type=int, default=3)
-    parser.add_argument("--search-grid", type=int, default=5)
+    parser.add_argument("--tiles-per-slide", type=int, default=8)
+    parser.add_argument("--seed", type=int, default=20260808)
     parser.add_argument("--worker-count", type=int, default=2)
     parser.add_argument("--host-reserve-bytes", type=int, required=True)
     parser.add_argument("--preflight-free-disk-bytes", type=int, required=True)
     arguments = parser.parse_args()
-    if arguments.tiles_per_slide <= 0 or arguments.search_grid <= 0:
+    if arguments.tiles_per_slide <= 0:
         raise ValueError("sampling counts must be positive")
     layout = RunLayout(arguments.repo_root, arguments.run_root)
     manifest = json.loads(
@@ -202,6 +209,9 @@ def main() -> int:
         "code_commit": arguments.code_commit,
         "image_digest": arguments.image_digest,
         "calibration_digest": calibration.sha256,
+        "sampling_design": "sha256-uniform-level0-without-replacement-v1",
+        "sampling_seed": arguments.seed,
+        "tiles_per_slide": arguments.tiles_per_slide,
     }
     document: dict[str, object] = {**identity, "samples": []}
     if output.exists():
@@ -226,7 +236,12 @@ def main() -> int:
                 grid = _physical_grid(slide)
                 width, height = slide.dimensions
                 tile_count = math.ceil(width / 512) * math.ceil(height / 512)
-                tiles = _sample_tiles(slide, arguments.tiles_per_slide, arguments.search_grid)
+                tiles = _sample_tiles(
+                    slide,
+                    arguments.tiles_per_slide,
+                    seed=arguments.seed,
+                    slide_ordinal=slide_index,
+                )
                 for tile_index, rgb in enumerate(tiles):
                     if (slide_index, tile_index) in completed:
                         continue

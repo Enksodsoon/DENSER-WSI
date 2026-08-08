@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -140,12 +141,15 @@ def download_manifest_partition(
     *,
     max_files: int | None = None,
     max_attempts_per_file: int = 12,
+    max_concurrent_files: int = 1,
     download_fn: DownloadFunction = download_verified,
 ) -> tuple[DownloadRecord, ...]:
     if partition not in {"development", "pilot", "tuning", "final"}:
         raise ValueError("unknown cohort partition")
     if max_attempts_per_file <= 0:
         raise ValueError("max_attempts_per_file must be positive")
+    if max_concurrent_files not in (1, 2):
+        raise ValueError("private download concurrency must be one or two files")
     layout.ensure()
     manifest = Path(manifest_path).resolve(strict=True)
     if not manifest.is_relative_to(layout.resolve("manifests")):
@@ -160,9 +164,9 @@ def download_manifest_partition(
         if max_files <= 0:
             raise ValueError("max_files must be positive")
         selected = selected[:max_files]
-    completed: list[DownloadRecord] = []
-    for row in selected:
-        record = _record(row)
+    records = tuple(_record(row) for row in selected)
+
+    def acquire(record: GdcSlideRecord) -> DownloadRecord:
         if record.access != "open":
             raise ValueError("only open-access cohort records may be downloaded")
         destination = layout.resolve("sources", partition, f"{record.research_id}.svs")
@@ -181,6 +185,16 @@ def download_manifest_partition(
                     last_error = error
             else:
                 raise RuntimeError("verified private download exhausted bounded retries") from last_error
-        completed.append(existing)
-        _write_ledger(layout.resolve("checkpoints", "download-ledger.private.json"), completed)
-    return tuple(completed)
+        return existing
+
+    completed: dict[str, DownloadRecord] = {}
+    with ThreadPoolExecutor(max_workers=max_concurrent_files) as pool:
+        futures = {pool.submit(acquire, record): record.research_id for record in records}
+        for future in as_completed(futures):
+            result = future.result()
+            completed[result.research_id] = result
+            _write_ledger(
+                layout.resolve("checkpoints", "download-ledger.private.json"),
+                [completed[key] for key in sorted(completed)],
+            )
+    return tuple(completed[record.research_id] for record in records)

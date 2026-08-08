@@ -4,6 +4,7 @@ import pytest
 
 from denser.orchestration.runtime_projection import (
     DevelopmentTimingSample,
+    deterministic_sample_indices,
     project_confirmatory_runtime,
 )
 
@@ -52,3 +53,12 @@ def test_projection_enforces_measured_two_worker_host_limit(workers: int) -> Non
             final_source_bytes=10_000,
             worker_count=workers,
         )
+
+
+def test_runtime_sample_indices_are_deterministic_uniform_without_replacement() -> None:
+    first = deterministic_sample_indices(10_000, 64, seed=17, slide_ordinal=3)
+    second = deterministic_sample_indices(10_000, 64, seed=17, slide_ordinal=3)
+    assert first == second
+    assert len(first) == len(set(first)) == 64
+    assert min(first) >= 0 and max(first) < 10_000
+    assert first != deterministic_sample_indices(10_000, 64, seed=18, slide_ordinal=3)

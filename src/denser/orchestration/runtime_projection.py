@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import math
+import hashlib
+import heapq
+import struct
 from dataclasses import dataclass
 
 
@@ -33,6 +36,22 @@ class RuntimeProjection:
     worker_count: int
     safety_factor: float
     projected_confirmatory_seconds: float
+
+
+def deterministic_sample_indices(
+    total: int, count: int, *, seed: int, slide_ordinal: int
+) -> tuple[int, ...]:
+    if total <= 0 or count <= 0 or count > total:
+        raise ValueError("runtime sample count must fit the level-0 grid")
+    if seed < 0 or slide_ordinal < 0:
+        raise ValueError("runtime sample seed and slide ordinal must be non-negative")
+
+    def key(index: int) -> bytes:
+        return hashlib.sha256(
+            struct.pack(">QQQ", seed, slide_ordinal, index)
+        ).digest()
+
+    return tuple(sorted(heapq.nsmallest(count, range(total), key=key)))
 
 
 def _nearest_rank_p95(values: list[float]) -> float:
