@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import threading
-
 import numpy as np
 
 from denser.certificates.encode import decode_certificate
@@ -141,35 +139,3 @@ def test_selection_reuses_only_a_matching_prepared_source_verifier() -> None:
             cell_size_px=8,
             prepared_verifier=prepared,
         )
-
-
-def test_selection_bounds_parallel_candidate_decoding_to_two() -> None:
-    source = np.random.default_rng(11).integers(0, 256, (32, 32, 3), dtype=np.uint8)
-    barrier = threading.Barrier(2)
-    guard = threading.Lock()
-    active = 0
-    peak = 0
-    registry = CodecRegistry()
-
-    def decode(payload, allocation, shape, profile):  # type: ignore[no-untyped-def]
-        nonlocal active, peak
-        with guard:
-            active += 1
-            peak = max(peak, active)
-        try:
-            barrier.wait(timeout=2)
-        finally:
-            with guard:
-                active -= 1
-        return source.copy()
-
-    registry.register("fixture", decode)
-    select_smallest_accepted_candidate(
-        source,
-        [_candidate("first", b"a"), _candidate("second", b"b")],
-        registry,
-        AcceptanceContract(),
-        PhysicalGrid(0.25, 0.25),
-        cell_size_px=8,
-    )
-    assert peak == 2

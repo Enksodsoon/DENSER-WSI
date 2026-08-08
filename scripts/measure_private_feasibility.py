@@ -308,20 +308,25 @@ def main() -> int:
                             "level0_tiles": tile_count,
                             "tile_pipeline_seconds": tile_pipeline_seconds,
                             "standard": {
+                                "candidate_count": len(standard_candidates),
                                 "build_seconds": standard_build,
                                 "select_seconds": standard_select,
                                 "complete_bytes": standard.breakdown.complete,
                                 "status": standard.status,
                                 "decode_cold_seconds": standard_cold,
                                 "decode_warm_seconds": standard_warm,
+                                "rejected_profiles": len(standard.rejected_profiles),
                             },
                             "uniform": {
+                                "candidate_count": len(uniform_candidates),
                                 "build_seconds": uniform_build,
                                 "select_seconds": uniform_select,
                                 "complete_bytes": uniform.breakdown.complete,
                                 "status": uniform.status,
+                                "rejected_profiles": len(uniform.rejected_profiles),
                             },
                             "denser": {
+                                "candidate_count": len(denser_candidates),
                                 "build_seconds": denser_build,
                                 "select_seconds": denser_select,
                                 "complete_bytes": denser.breakdown.complete,
@@ -329,6 +334,7 @@ def main() -> int:
                                 "profile": denser.candidate.profile_id,
                                 "decode_cold_seconds": denser_cold,
                                 "decode_warm_seconds": denser_warm,
+                                "rejected_profiles": len(denser.rejected_profiles),
                             },
                         }
                     )

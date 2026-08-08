@@ -10,6 +10,7 @@ from denser.evidence.architecture import (
 from denser.evidence.nuclei import nuclear_features
 from denser.evidence.sentinels import sentinel_features
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
+from denser.evidence.visual import visual_features
 
 
 def _challenge_pair(control: str) -> tuple[np.ndarray, np.ndarray]:
@@ -94,3 +95,67 @@ def test_acceptance_evidence_can_compute_only_globally_failed_groups() -> None:
             AcceptanceContract(),
             groups=("unknown",),
         )
+
+
+def _reference_visual_features(rgb: np.ndarray) -> tuple[float, ...]:
+    pixels = np.asarray(rgb, dtype=np.uint8)
+    features: list[float] = []
+    for channel in range(3):
+        histogram, _ = np.histogram(pixels[:, :, channel], bins=16, range=(0, 256))
+        features.extend((histogram / pixels[:, :, channel].size).tolist())
+    luminance = pixels.astype(np.float64).mean(axis=2)
+    features.extend((float(luminance.mean() / 255), float(luminance.std() / 255)))
+    normalized = pixels.astype(np.float64) / 255.0
+    for channel in range(3):
+        features.extend(
+            (
+                float(normalized[:, :, channel].mean()),
+                float(normalized[:, :, channel].std()),
+            )
+        )
+    red_green = normalized[:, :, 0] - normalized[:, :, 1]
+    blue_green = normalized[:, :, 2] - normalized[:, :, 1]
+    features.extend(
+        (
+            float(np.mean(np.abs(red_green))),
+            float(np.std(red_green)),
+            float(np.mean(np.abs(blue_green))),
+            float(np.std(blue_green)),
+        )
+    )
+    flattened = normalized.reshape(-1, 3)
+    covariance = (
+        np.cov(flattened, rowvar=False)
+        if len(flattened) > 1
+        else np.zeros((3, 3))
+    )
+    channel_std = np.sqrt(np.maximum(np.diag(covariance), 1e-12))
+    correlation = covariance / np.outer(channel_std, channel_std)
+    features.extend(
+        (
+            float(correlation[0, 1]),
+            float(correlation[0, 2]),
+            float(correlation[1, 2]),
+            float(np.linalg.det(covariance)),
+        )
+    )
+    height, width = luminance.shape
+    for y_indices in np.array_split(np.arange(height), 4):
+        for x_indices in np.array_split(np.arange(width), 4):
+            red_block = red_green[np.ix_(y_indices, x_indices)]
+            blue_block = blue_green[np.ix_(y_indices, x_indices)]
+            features.extend(
+                (
+                    float(np.mean(np.abs(red_block))) if red_block.size else 0.0,
+                    float(np.mean(np.abs(blue_block))) if blue_block.size else 0.0,
+                )
+            )
+    return tuple(features)
+
+
+@pytest.mark.parametrize("shape", ((32, 32, 3), (31, 29, 3), (1, 1, 3)))
+def test_fast_visual_features_preserve_reference_values(shape: tuple[int, int, int]) -> None:
+    rgb = np.random.default_rng(19).integers(0, 256, shape, dtype=np.uint8)
+    assert visual_features(rgb) == pytest.approx(
+        _reference_visual_features(rgb), rel=1e-12, abs=1e-12
+    )

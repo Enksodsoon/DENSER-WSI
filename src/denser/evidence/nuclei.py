@@ -96,12 +96,20 @@ def nuclear_features(
     else:
         centroid_y = centroid_x = 0.0
     height, width = hematoxylin.shape
-    spatial = tuple(
-        float(block.mean()) if block.size else 0.0
-        for y_indices in np.array_split(np.arange(height), 4)
-        for x_indices in np.array_split(np.arange(width), 4)
-        for block in (hematoxylin[np.ix_(y_indices, x_indices)],)
-    )
+    if height % 4 == 0 and width % 4 == 0:
+        spatial = tuple(
+            float(value)
+            for value in hematoxylin.reshape(
+                4, height // 4, 4, width // 4
+            ).mean(axis=(1, 3)).ravel()
+        )
+    else:
+        spatial = tuple(
+            float(block.mean()) if block.size else 0.0
+            for y_indices in np.array_split(np.arange(height), 4)
+            for x_indices in np.array_split(np.arange(width), 4)
+            for block in (hematoxylin[np.ix_(y_indices, x_indices)],)
+        )
     return (
         float(len(objects)) * 1_000_000.0 / (height * width * pixel_area_um2),
         area / (height * width),
