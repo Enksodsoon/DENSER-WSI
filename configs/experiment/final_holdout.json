@@ -1,0 +1,7 @@
+{
+  "methods": ["standard", "uniform", "denser"],
+  "candidate_steps": [1.0, 2.0, 4.0],
+  "sampled_tile_extrapolation_for_primary_endpoint_allowed": false,
+  "verify_freeze_before_every_slide": true,
+  "private_output": "results/final"
+}

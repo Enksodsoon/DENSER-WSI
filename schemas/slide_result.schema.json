@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Enksodsoon/DENSER-WSI/schemas/slide_result.schema.json",
+  "title": "Aggregate-safe final slide result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["method", "complete_bytes", "tile_count", "acceptance_violations", "ledger_verified"],
+  "properties": {
+    "method": {"enum": ["standard", "uniform", "denser"]},
+    "complete_bytes": {"type": "integer", "minimum": 0},
+    "tile_count": {"type": "integer", "minimum": 1},
+    "acceptance_violations": {"type": "integer", "minimum": 0},
+    "ledger_verified": {"type": "boolean"}
+  }
+}

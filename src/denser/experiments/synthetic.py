@@ -75,8 +75,12 @@ def _candidate_for(method: str, tile: np.ndarray, profile: CandidateProfile) -> 
     values = tile.astype(np.float64)
     sensitivity = np.empty_like(values)
     for channel in range(3):
-        gy, gx = np.gradient(values[:, :, channel])
-        sensitivity[:, :, channel] = np.hypot(gx, gy) + 1.0
+        plane = values[:, :, channel]
+        if min(plane.shape) < 2:
+            sensitivity[:, :, channel] = 1.0
+        else:
+            gy, gx = np.gradient(plane)
+            sensitivity[:, :, channel] = np.hypot(gx, gy) + 1.0
     return build_denser_candidates(tile, sensitivity, profile)[0]
 
 
