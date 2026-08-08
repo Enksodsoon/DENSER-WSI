@@ -3,6 +3,7 @@ from __future__ import annotations
 from denser.evidence.calibrate import (
     acceptance_contract_from_calibration,
     calibrate_contract,
+    calibration_record_from_dict,
     verify_calibration,
 )
 from denser.evidence.controls import CalibrationProfile, ControlPair
@@ -97,3 +98,24 @@ def test_calibration_produces_frozen_absolute_group_bounds() -> None:
         "nuclear_objects", "architecture", "rare_event_sentinels", "visual"
     }
     assert all(bound > 0 for _name, bounds in contract.absolute_group_bounds for bound in bounds)
+
+
+def test_calibration_record_round_trips_through_canonical_mapping() -> None:
+    from dataclasses import asdict
+
+    record = calibrate_contract(_benign_pairs(), _profile())
+    assert calibration_record_from_dict(asdict(record)) == record
+
+
+def test_calibration_record_rejects_tampered_digest() -> None:
+    from dataclasses import asdict
+
+    record = calibrate_contract(_benign_pairs(), _profile())
+    document = asdict(record)
+    document["sha256"] = "0" * 64
+    try:
+        calibration_record_from_dict(document)
+    except ValueError as error:
+        assert "digest" in str(error)
+    else:
+        raise AssertionError("tampered calibration digest was accepted")

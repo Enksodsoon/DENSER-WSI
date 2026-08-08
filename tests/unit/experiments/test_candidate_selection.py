@@ -54,3 +54,25 @@ def test_selection_falls_back_when_no_candidate_beats_verified_lossless() -> Non
     assert selected.candidate.codec_id == SharedLosslessCodec.codec_id
     assert selected.status == "fallback"
     assert McV2TilePacket.decode(selected.packet).fallback
+
+
+def test_selection_skips_candidates_whose_bytes_cannot_beat_current_best() -> None:
+    source = np.zeros((8, 8, 3), dtype=np.uint8)
+    calls: list[str] = []
+    registry = CodecRegistry()
+
+    def decode(payload, allocation, shape, profile):  # type: ignore[no-untyped-def]
+        calls.append(profile)
+        return source.copy()
+
+    registry.register("fixture", decode)
+    selected = select_smallest_accepted_candidate(
+        source,
+        [_candidate("huge", b"x" * 100_000), _candidate("small", b"x")],
+        registry,
+        AcceptanceContract(),
+        PhysicalGrid(0.25, 0.25),
+        cell_size_px=8,
+    )
+    assert selected.breakdown.complete == len(selected.packet)
+    assert "huge" not in calls

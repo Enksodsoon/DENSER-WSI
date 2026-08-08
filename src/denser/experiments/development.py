@@ -7,7 +7,7 @@ from pathlib import Path
 from denser.core.canonical import canonical_json_bytes
 from denser.core.errors import PartitionViolation
 from denser.data.manifest import PartitionManifest
-from denser.evidence.calibrate import calibrate_contract
+from denser.evidence.calibrate import calibrate_contract, verify_calibration
 from denser.evidence.controls import CalibrationProfile, ControlPair
 
 
@@ -27,6 +27,8 @@ class DevelopmentReport:
     status: str
     slide_count: int
     calibration_digest: str | None
+    calibration_audit_status: str | None
+    missed_control_ids: tuple[str, ...]
     candidate_steps: tuple[float, ...]
     scratch_multiplier: float | None
     manifest_digest: str
@@ -42,16 +44,32 @@ def run_development(
     if any(step < low or step > high for step in config.candidate_steps):
         raise ValueError("candidate step lies outside the predeclared development range")
     calibration_digest: str | None = None
+    calibration_audit_status: str | None = None
+    missed_control_ids: tuple[str, ...] = ()
     status = "external_access_limited"
     if config.control_pairs:
+        benign = [pair for pair in config.control_pairs if pair.kind == "benign"]
+        harmful = [pair for pair in config.control_pairs if pair.kind == "harmful"]
+        challenge_ids = tuple(sorted(pair.control_id for pair in harmful))
         calibration = calibrate_contract(
-            list(config.control_pairs), CalibrationProfile(0.05, ())
+            benign, CalibrationProfile(0.05, challenge_ids)
         )
-        calibration_digest = calibration.sha256
-        status = "complete"
+        audit = verify_calibration(calibration, harmful)
+        calibration_audit_status = audit.status
+        missed_control_ids = audit.missed_control_ids
+        if audit.status == "calibrated":
+            calibration_digest = calibration.sha256
+            status = "complete"
+        else:
+            status = "control_audit_failed"
         calibration_path = Path(config.output_root) / "calibration-record.json"
         calibration_path.parent.mkdir(parents=True, exist_ok=True)
-        calibration_path.write_bytes(canonical_json_bytes(asdict(calibration)) + b"\n")
+        calibration_path.write_bytes(
+            canonical_json_bytes(
+                {"calibration": asdict(calibration), "harmful_control_audit": asdict(audit)}
+            )
+            + b"\n"
+        )
     scratch = None
     if config.measured_source_bytes > 0:
         scratch = config.measured_peak_scratch_bytes / config.measured_source_bytes
@@ -59,6 +77,8 @@ def run_development(
         "status": status,
         "slide_count": len(manifest.rows),
         "calibration_digest": calibration_digest,
+        "calibration_audit_status": calibration_audit_status,
+        "missed_control_ids": list(missed_control_ids),
         "candidate_steps": list(config.candidate_steps),
         "scratch_multiplier": scratch,
         "manifest_digest": manifest.manifest_sha256,
@@ -68,6 +88,8 @@ def run_development(
         status,
         len(manifest.rows),
         calibration_digest,
+        calibration_audit_status,
+        missed_control_ids,
         config.candidate_steps,
         scratch,
         manifest.manifest_sha256,

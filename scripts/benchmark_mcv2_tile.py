@@ -17,15 +17,25 @@ from denser.method.candidates import (
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark one private tile without emitting identifiers")
-    parser.add_argument("slide", type=Path)
+    parser.add_argument("slide", type=Path, nargs="?")
+    parser.add_argument("--slide-root", type=Path)
     parser.add_argument("--tile-size", type=int, default=512)
     parser.add_argument("--step", type=float, default=4.0)
     parser.add_argument("--search-grid", type=int, default=5)
     parser.add_argument("--verified", action="store_true")
+    parser.add_argument("--calibration", type=Path)
     arguments = parser.parse_args()
+    if (arguments.slide is None) == (arguments.slide_root is None):
+        parser.error("provide exactly one slide path or --slide-root")
+    slide_path = arguments.slide
+    if slide_path is None:
+        slides = sorted(arguments.slide_root.glob("*.svs"))
+        if not slides:
+            raise RuntimeError("slide root contains no SVS development source")
+        slide_path = slides[0]
     import openslide
 
-    slide = openslide.OpenSlide(str(arguments.slide))
+    slide = openslide.OpenSlide(str(slide_path))
     width, height = slide.dimensions
     size = arguments.tile_size
     best: tuple[float, np.ndarray] | None = None
@@ -70,12 +80,31 @@ def main() -> int:
         from denser.codecs.registry import build_default_registry
         from denser.codecs.quadtree import build_jpegxl_quadtree_candidate
         from denser.codecs.standard import StandardLadder, build_standard_candidates
+        from denser.evidence.calibrate import (
+            acceptance_contract_from_calibration,
+            calibration_record_from_dict,
+        )
         from denser.evidence.types import AcceptanceContract, PhysicalGrid
         from denser.experiments.candidate_selection import select_smallest_accepted_candidate
 
         registry = build_default_registry()
         contract = AcceptanceContract()
-        grid = PhysicalGrid(0.25, 0.25)
+        if arguments.calibration is not None:
+            calibration_document = json.loads(arguments.calibration.read_text(encoding="utf-8"))
+            audit = calibration_document.get("harmful_control_audit", {})
+            if audit.get("status") != "calibrated":
+                raise ValueError("verified benchmark requires a passing harmful-control audit")
+            contract = acceptance_contract_from_calibration(
+                calibration_record_from_dict(calibration_document["calibration"])
+            )
+        shared_mpp = slide.properties.get("aperio.MPP")
+        mpp_x = slide.properties.get("openslide.mpp-x", shared_mpp)
+        mpp_y = slide.properties.get("openslide.mpp-y", shared_mpp)
+        if mpp_x is None or mpp_y is None:
+            raise ValueError("verified benchmark requires physical-scale metadata")
+        grid = PhysicalGrid(float(mpp_x), float(mpp_y))
+        if not (0.1 <= grid.mpp_x <= 1.0 and 0.1 <= grid.mpp_y <= 1.0):
+            raise ValueError("physical scale is outside the frozen development range")
         portfolios = {
             "standard": build_standard_candidates(rgb, StandardLadder()),
             "uniform": uniform_candidates,

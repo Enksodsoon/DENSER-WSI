@@ -10,6 +10,7 @@ from denser.certificates.verify import verify_certificate
 from denser.codecs.base import EncodedCandidate
 from denser.codecs.lossless import SharedLosslessCodec
 from denser.codecs.registry import CodecRegistry
+from denser.container.packet_v2 import HEADER as TILE_PACKET_HEADER
 from denser.container.packet_v2 import McV2TilePacket
 from denser.core.models import ByteBreakdown
 from denser.evidence.localized import LocalizedAcceptanceVerifier
@@ -79,23 +80,44 @@ def select_smallest_accepted_candidate(
     if source.dtype != np.uint8 or source.ndim != 3 or source.shape[2] != 3:
         raise ValueError("candidate selection requires a uint8 RGB tile")
     verifier = LocalizedAcceptanceVerifier(contract, cell_size_px, grid)
+    prepared_verifier = verifier.prepare(source)
     fallback_codec = SharedLosslessCodec()
     accepted: list[tuple[int, str, AcceptedTileCandidate]] = []
     rejected: list[str] = []
-    for candidate in candidates:
+    fallback = fallback_codec.encode(source)
+    fallback_decoded = fallback_codec.decode(fallback.payload, source.shape)
+    fallback_packet, fallback_breakdown = _packet_for(
+        source, fallback, fallback_decoded, b"", contract, grid, fallback=True
+    )
+    best_complete_bytes = len(fallback_packet)
+
+    def packet_lower_bound(candidate: EncodedCandidate) -> int:
+        return (
+            TILE_PACKET_HEADER.size
+            + len(candidate.codec_id.encode("ascii"))
+            + len(candidate.profile_id.encode("ascii"))
+            + len(candidate.allocation_map)
+            + len(candidate.payload)
+            + 1  # MC-V2 requires a non-empty certificate.
+        )
+
+    ordered = sorted(candidates, key=lambda item: (packet_lower_bound(item), item.profile_id))
+    for candidate in ordered:
+        if packet_lower_bound(candidate) > best_complete_bytes:
+            break
         try:
             decoded = registry.decode(candidate, source.shape)
         except (OSError, RuntimeError, ValueError):
             rejected.append(candidate.profile_id)
             continue
-        verification = verifier.verify(source, decoded)
+        verification = prepared_verifier.verify(source, decoded)
         repair_payload = b""
         status = "verified"
         if not verification.passed:
             repair = repair_until_verified(
                 source,
                 decoded,
-                verifier,
+                prepared_verifier,
                 fallback_codec,
                 halo_um=halo_um,
                 mpp=grid.mean_mpp,
@@ -113,12 +135,8 @@ def select_smallest_accepted_candidate(
             candidate, decoded, repair_payload, packet, breakdown, status, ()
         )
         accepted.append((len(packet), candidate.profile_id, result))
+        best_complete_bytes = min(best_complete_bytes, len(packet))
 
-    fallback = fallback_codec.encode(source)
-    fallback_decoded = fallback_codec.decode(fallback.payload, source.shape)
-    fallback_packet, fallback_breakdown = _packet_for(
-        source, fallback, fallback_decoded, b"", contract, grid, fallback=True
-    )
     fallback_result = AcceptedTileCandidate(
         fallback,
         fallback_decoded,

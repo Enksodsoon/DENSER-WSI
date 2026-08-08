@@ -13,7 +13,12 @@ from denser.certificates.encode import decode_certificate
 from denser.certificates.verify import verify_certificate
 from denser.codecs.lossless import SharedLosslessCodec
 from denser.container.mcv1 import McV1Reader
+from denser.container.mcv2 import MAGIC as MCV2_MAGIC
+from denser.container.mcv2 import McV2Reader
+from denser.container.packet_v2 import McV2TilePacket
 from denser.core.models import TileAddress
+from denser.experiments.candidate_selection import decode_and_verify_tile_packet
+from denser.codecs.registry import build_default_registry
 from denser.method.candidates import decode_candidate
 from denser.repair.packet_v2 import apply_repair_packet
 
@@ -43,10 +48,13 @@ class VerifiedTileResponse:
 
 def get_slide_metadata(path: Path) -> AdapterMetadata:
     start = time.perf_counter_ns()
-    reader = McV1Reader(Path(path))
+    resolved = Path(path)
+    with resolved.open("rb") as stream:
+        is_v2 = stream.read(len(MCV2_MAGIC)) == MCV2_MAGIC
+    reader = McV2Reader(resolved) if is_v2 else McV1Reader(resolved)
     latency = (time.perf_counter_ns() - start) / 1_000_000
     return AdapterMetadata(
-        "MC-V1",
+        "MC-V2" if is_v2 else "MC-V1",
         reader.tile_count,
         reader.addresses,
         reader.byte_ledger().complete_bytes,
@@ -61,7 +69,30 @@ def get_tile(
 ) -> VerifiedTileResponse:
     selected_contract = contract or PathLabAdapterContract()
     start = time.perf_counter_ns()
-    packet = McV1Reader(Path(path)).read_tile(address)
+    resolved = Path(path)
+    with resolved.open("rb") as stream:
+        is_v2 = stream.read(len(MCV2_MAGIC)) == MCV2_MAGIC
+    if is_v2:
+        encoded = McV2Reader(resolved).read_tile(address)
+        packet_v2 = McV2TilePacket.decode(encoded)
+        certificate = decode_certificate(packet_v2.certificate)
+        rgb = decode_and_verify_tile_packet(
+            encoded,
+            (address.height, address.width, 3),
+            build_default_registry(),
+            selected_contract.acceptance,
+        )
+        passed = not selected_contract.require_self_verifying_certificate or certificate.self_verifying
+        latency = (time.perf_counter_ns() - start) / 1_000_000
+        return VerifiedTileResponse(
+            rgb,
+            address,
+            passed,
+            False,
+            certificate.mode,
+            latency,
+        )
+    packet = McV1Reader(resolved).read_tile(address)
     if len(packet) < _PACKET_HEADER.size:
         raise ValueError("adapter packet is truncated")
     magic, kind, allocation_length, payload_length, repair_length, cert_length, method_length = _PACKET_HEADER.unpack_from(packet)

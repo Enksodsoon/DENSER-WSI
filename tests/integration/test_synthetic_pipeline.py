@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from denser.container.mcv1 import McV1Reader
+from denser.codecs.lossless import SharedLosslessCodec
+from denser.container.mcv2 import McV2Reader
 from denser.experiments.synthetic import SyntheticValidationConfig, run_synthetic_validation
 from denser.synthetic.histology import SyntheticSlideSpec, generate_synthetic_slide
 
@@ -12,10 +13,11 @@ def small_config(tmp_path: Path) -> SyntheticValidationConfig:
         output_root=tmp_path,
         slide_specs=(SyntheticSlideSpec(width=64, height=64, tile_size=32),),
         seed=314,
+        standard_builder=lambda tile: [SharedLosslessCodec().encode(tile)],
     )
 
 
-def test_synthetic_slide_runs_all_portfolios_into_mcv1(tmp_path: Path) -> None:
+def test_synthetic_slide_runs_all_portfolios_into_mcv2(tmp_path: Path) -> None:
     report = run_synthetic_validation(small_config(tmp_path))
     assert report.methods == {"standard", "uniform", "denser"}
     assert all(row.complete_bytes == row.path.stat().st_size for row in report.slides)
@@ -26,7 +28,8 @@ def test_synthetic_slide_runs_all_portfolios_into_mcv1(tmp_path: Path) -> None:
     assert report.resume_replayed_only_uncommitted
     for row in report.slides:
         assert row.tile_count == 4
-        assert McV1Reader(row.path).byte_ledger().complete_bytes == row.complete_bytes
+        assert row.path.suffix == ".mcv2"
+        assert McV2Reader(row.path).byte_ledger().complete_bytes == row.complete_bytes
 
 
 def test_synthetic_histology_is_seed_deterministic_and_contains_controls() -> None:

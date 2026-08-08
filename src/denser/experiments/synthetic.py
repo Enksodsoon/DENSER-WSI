@@ -1,34 +1,39 @@
 from __future__ import annotations
 
-import hashlib
 import shutil
-import struct
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from denser.certificates.encode import build_certificate, encode_certificate
-from denser.certificates.verify import verify_certificate
 from denser.codecs.base import EncodedCandidate
 from denser.codecs.lossless import SharedLosslessCodec
-from denser.container.mcv1 import McV1CorruptionError, McV1Reader, McV1Writer
-from denser.core.models import ByteBreakdown, TileAddress
-from denser.evidence.types import AcceptanceContract
+from denser.codecs.registry import build_default_registry
+from denser.codecs.standard import StandardLadder, build_standard_candidates
+from denser.container.mcv2 import McV2CorruptionError, McV2Reader, McV2Writer
+from denser.core.models import TileAddress
+from denser.evidence.types import AcceptanceContract, PhysicalGrid
+from denser.experiments.candidate_selection import (
+    decode_and_verify_tile_packet,
+    select_smallest_accepted_candidate,
+)
 from denser.method.candidates import (
     CandidateProfile,
     build_denser_candidates,
     build_uniform_candidates,
-    decode_candidate,
 )
 from denser.orchestration.runner import PhaseRunner, SimulatedCrash
 from denser.repair.escalate import repair_until_verified
 from denser.repair.mask import RepairFailure
-from denser.repair.packet_v2 import apply_repair_packet
 from denser.synthetic.histology import SyntheticSlideSpec, generate_synthetic_slide
 
 
-_PACKET_HEADER = struct.Struct(">4sBIIIII")
+StandardBuilder = Callable[[np.ndarray], list[EncodedCandidate]]
+
+
+def _native_standard_builder(tile: np.ndarray) -> list[EncodedCandidate]:
+    return build_standard_candidates(tile, StandardLadder())
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +42,7 @@ class SyntheticValidationConfig:
     slide_specs: tuple[SyntheticSlideSpec, ...] = (SyntheticSlideSpec(),)
     seed: int = 1
     quantization_steps: tuple[float, ...] = (1.0, 2.0, 4.0)
+    standard_builder: StandardBuilder = _native_standard_builder
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,99 +75,17 @@ class _ExactRepairVerifier:
         return type("RepairCheck", (), {"passed": passed, "failures": failures})()
 
 
-def _candidate_for(method: str, tile: np.ndarray, profile: CandidateProfile) -> EncodedCandidate:
-    if method == "standard":
-        return SharedLosslessCodec().encode(tile)
-    if method == "uniform":
-        return build_uniform_candidates(tile, profile)[0]
+def _sensitivity(tile: np.ndarray) -> np.ndarray:
     values = tile.astype(np.float64)
-    sensitivity = np.empty_like(values)
+    result = np.empty_like(values)
     for channel in range(3):
         plane = values[:, :, channel]
         if min(plane.shape) < 2:
-            sensitivity[:, :, channel] = 1.0
+            result[:, :, channel] = 1.0
         else:
             gy, gx = np.gradient(plane)
-            sensitivity[:, :, channel] = np.hypot(gx, gy) + 1.0
-    return build_denser_candidates(tile, sensitivity, profile)[0]
-
-
-def _decoded(candidate: EncodedCandidate, shape: tuple[int, int, int]) -> np.ndarray:
-    if candidate.codec_id == SharedLosslessCodec.codec_id:
-        return SharedLosslessCodec().decode(candidate.payload, shape)
-    return decode_candidate(candidate.payload, candidate.allocation_map)
-
-
-def _packet(
-    method: str,
-    tile: np.ndarray,
-    candidate: EncodedCandidate,
-    contract: AcceptanceContract,
-    repair_trace: bytes,
-    certificate=None,  # type: ignore[no-untyped-def]
-) -> tuple[bytes, ByteBreakdown]:
-    if certificate is None:
-        certificate = build_certificate(tile, candidate, contract)
-    elif certificate.packet_sha256 != hashlib.sha256(
-        candidate.allocation_map + candidate.payload + repair_trace
-    ).hexdigest():
-        raise ValueError("prebuilt certificate does not match the candidate packet")
-    cert_bytes = encode_certificate(certificate)
-    reference_bytes = certificate.reference_payload.encoded_bytes if certificate.reference_payload else 0
-    codec_kind = 0 if candidate.codec_id == SharedLosslessCodec.codec_id else 1
-    header = _PACKET_HEADER.pack(
-        b"SVP2",
-        codec_kind,
-        len(candidate.allocation_map),
-        len(candidate.payload),
-        len(repair_trace),
-        len(cert_bytes),
-        len(method.encode("ascii")),
-    )
-    method_bytes = method.encode("ascii")
-    fallback_signal = b"\x01" if codec_kind == 0 else b""
-    packet = (
-        header
-        + method_bytes
-        + fallback_signal
-        + candidate.allocation_map
-        + candidate.payload
-        + repair_trace
-        + cert_bytes
-    )
-    breakdown = ByteBreakdown(
-        payload=len(candidate.payload),
-        repair=len(repair_trace),
-        certificate=len(cert_bytes) - reference_bytes,
-        reference_evidence=reference_bytes,
-        method_signaling=len(header) + len(method_bytes) + len(candidate.allocation_map),
-        fallback_signaling=len(fallback_signal),
-    )
-    if breakdown.complete != len(packet):
-        raise RuntimeError("synthetic packet accounting mismatch")
-    return packet, breakdown
-
-
-def _decode_packet(packet: bytes, shape: tuple[int, int, int]) -> np.ndarray:
-    if len(packet) < _PACKET_HEADER.size:
-        raise ValueError("synthetic packet is truncated")
-    magic, kind, allocation_length, payload_length, repair_length, cert_length, method_length = _PACKET_HEADER.unpack_from(packet)
-    if magic != b"SVP2":
-        raise ValueError("synthetic packet identity is invalid")
-    offset = _PACKET_HEADER.size + method_length + (1 if kind == 0 else 0)
-    expected = offset + allocation_length + payload_length + repair_length + cert_length
-    if expected != len(packet):
-        raise ValueError("synthetic packet section lengths are invalid")
-    allocation_map = packet[offset : offset + allocation_length]
-    payload_offset = offset + allocation_length
-    payload = packet[payload_offset : payload_offset + payload_length]
-    if kind == 0:
-        decoded = SharedLosslessCodec().decode(payload, shape)
-    else:
-        decoded = decode_candidate(payload, allocation_map)
-    repair_offset = payload_offset + payload_length
-    repair_payload = packet[repair_offset : repair_offset + repair_length]
-    return apply_repair_packet(decoded, repair_payload) if repair_payload else decoded
+            result[:, :, channel] = np.hypot(gx, gy) + 1.0
+    return result
 
 
 def _exercise_resume(root: Path) -> bool:
@@ -190,27 +114,34 @@ def run_synthetic_validation(config: SyntheticValidationConfig) -> SyntheticVali
         sentinel_relative_tolerance=1.0,
         visual_relative_tolerance=1.0,
     )
+    registry = build_default_registry()
     results: list[SyntheticSlideResult] = []
     unresolved = 0
     repair_exercised = False
+    fallback_exercised = False
     addresses: list[TileAddress] = []
+    first_tile: np.ndarray | None = None
+    first_grid: PhysicalGrid | None = None
     for slide_number, spec in enumerate(config.slide_specs):
         slide = generate_synthetic_slide(spec, config.seed + slide_number)
+        grid = PhysicalGrid(spec.mpp, spec.mpp)
         for method in ("standard", "uniform", "denser"):
-            path = root / f"synthetic-{slide_number:03d}.{method}.mcv1"
-            writer = McV1Writer(path)
+            path = root / f"synthetic-{slide_number:03d}.{method}.mcv2"
+            writer = McV2Writer(path)
             try:
                 for tile_number, (address, tile) in enumerate(slide.tiles()):
-                    candidate = _candidate_for(method, tile, profile)
-                    decoded = _decoded(candidate, tile.shape)
-                    certificate = build_certificate(tile, candidate, contract)
-                    if not verify_certificate(decoded, certificate, contract).passed:
-                        candidate = SharedLosslessCodec().encode(tile)
-                        decoded = _decoded(candidate, tile.shape)
-                        certificate = build_certificate(tile, candidate, contract)
-                        if not verify_certificate(decoded, certificate, contract).passed:
-                            unresolved += 1
-                    repair_trace = b""
+                    if first_tile is None:
+                        first_tile, first_grid = tile.copy(), grid
+                    if method == "standard":
+                        candidates = config.standard_builder(tile)
+                    elif method == "uniform":
+                        candidates = build_uniform_candidates(tile, profile)
+                    else:
+                        candidates = build_denser_candidates(tile, _sensitivity(tile), profile)
+                    selected = select_smallest_accepted_candidate(
+                        tile, candidates, registry, contract, grid, cell_size_px=16
+                    )
+                    writer.add_tile(address, selected.packet, selected.breakdown)
                     if method == "denser" and tile_number == 0:
                         damaged = tile.copy()
                         damaged[1:3, 1:3] = 0
@@ -223,46 +154,54 @@ def run_synthetic_validation(config: SyntheticValidationConfig) -> SyntheticVali
                             mpp=spec.mpp,
                         )
                         repair_exercised = repair.status == "verified_repair"
-                        # The repair probe validates the real serializable repair path,
-                        # but is not attached to the independently encoded candidate.
-                        repair_trace = b""
-                    packet, breakdown = _packet(method, tile, candidate, contract, repair_trace)
-                    writer.add_tile(address, packet, breakdown)
                     if slide_number == 0 and method == "standard":
                         addresses.append(address)
                 writer.finalize()
             except Exception:
                 writer.abort()
                 raise
-            reader = McV1Reader(path)
+            reader = McV2Reader(path)
             for address, tile in slide.tiles():
-                independently_decoded = _decode_packet(reader.read_tile(address), tile.shape)
+                try:
+                    independently_decoded = decode_and_verify_tile_packet(
+                        reader.read_tile(address), tile.shape, registry, contract
+                    )
+                except ValueError:
+                    unresolved += 1
+                    continue
                 if independently_decoded.shape != tile.shape:
                     unresolved += 1
             ledger = reader.byte_ledger()
-            results.append(SyntheticSlideResult(method, path, ledger.complete_bytes, len(slide.tiles())))
+            results.append(SyntheticSlideResult(method, path, ledger.complete_bytes, reader.tile_count))
+
+    if first_tile is not None and first_grid is not None:
+        fallback = select_smallest_accepted_candidate(
+            first_tile, [], registry, contract, first_grid, cell_size_px=16
+        )
+        fallback_exercised = fallback.status == "fallback"
+        decode_and_verify_tile_packet(fallback.packet, first_tile.shape, registry, contract)
 
     corruption_rejected = False
     if results:
-        corrupt_path = root / "corruption-probe.mcv1"
+        corrupt_path = root / "corruption-probe.mcv2"
         shutil.copyfile(results[0].path, corrupt_path)
-        probe = McV1Reader(corrupt_path)
+        probe = McV2Reader(corrupt_path)
         with corrupt_path.open("r+b") as stream:
             stream.seek(probe.packet_region_offset)
             byte = stream.read(1)
             stream.seek(probe.packet_region_offset)
             stream.write(bytes([byte[0] ^ 1]))
         try:
-            McV1Reader(corrupt_path).read_tile(addresses[0])
-        except McV1CorruptionError:
+            McV2Reader(corrupt_path).read_tile(addresses[0])
+        except McV2CorruptionError:
             corruption_rejected = True
         corrupt_path.unlink()
 
     return SyntheticValidationReport(
         tuple(results),
         unresolved,
-        fallback_exercised=any(row.method == "standard" for row in results),
-        repair_exercised=repair_exercised,
-        corruption_rejected=corruption_rejected,
-        resume_replayed_only_uncommitted=_exercise_resume(root),
+        fallback_exercised,
+        repair_exercised,
+        corruption_rejected,
+        _exercise_resume(root),
     )

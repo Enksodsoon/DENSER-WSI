@@ -118,6 +118,47 @@ def verify_calibration(
     return CalibrationAudit(status, tuple(detected), tuple(missed), tuple(scores))
 
 
+def calibration_record_from_dict(document: dict[str, object]) -> CalibrationRecord:
+    try:
+        standardization = tuple(
+            GroupStandardization(
+                str(item["group"]),
+                tuple(float(value) for value in item["centers"]),
+                tuple(float(value) for value in item["scales"]),
+            )
+            for item in document["standardization"]  # type: ignore[union-attr]
+        )
+        thresholds = tuple(
+            (str(item[0]), float(item[1]))
+            for item in document["thresholds"]  # type: ignore[union-attr]
+        )
+        record = CalibrationRecord(
+            str(document["version"]),
+            str(document["threshold_basis"]),
+            float(document["alpha"]),
+            standardization,
+            thresholds,
+            tuple(str(value) for value in document["fit_control_ids"]),  # type: ignore[union-attr]
+            tuple(str(value) for value in document["challenge_control_ids"]),  # type: ignore[union-attr]
+            str(document["sha256"]),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("calibration record mapping is invalid") from error
+    unsigned = {
+        "version": record.version,
+        "threshold_basis": record.threshold_basis,
+        "alpha": record.alpha,
+        "standardization": [asdict(item) for item in record.standardization],
+        "thresholds": list(record.thresholds),
+        "fit_control_ids": sorted(record.fit_control_ids),
+        "challenge_control_ids": list(record.challenge_control_ids),
+    }
+    digest = hashlib.sha256(canonical_json_bytes(unsigned)).hexdigest()
+    if digest != record.sha256:
+        raise ValueError("calibration record digest mismatch")
+    return record
+
+
 def acceptance_contract_from_calibration(record: CalibrationRecord) -> AcceptanceContract:
     required = {"nuclear_objects", "architecture", "rare_event_sentinels", "visual"}
     standardization = {item.group: item for item in record.standardization}

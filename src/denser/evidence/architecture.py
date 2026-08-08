@@ -67,6 +67,16 @@ def compare_acceptance(
 ) -> AcceptanceComparison:
     reference = compute_acceptance_evidence(source, physical_grid, contract)
     candidate = compute_acceptance_evidence(decoded, physical_grid, contract)
+    return compare_evidence(reference, candidate, contract)
+
+
+def compare_evidence(
+    reference: AcceptanceEvidence,
+    candidate: AcceptanceEvidence,
+    contract: AcceptanceContract,
+) -> AcceptanceComparison:
+    if reference.version != contract.version or candidate.version != contract.version:
+        raise ValueError("evidence version does not match acceptance contract")
     calibrated = dict(contract.absolute_group_bounds)
     tolerances = {
         "nuclear_objects": contract.nuclear_relative_tolerance,
@@ -75,6 +85,8 @@ def compare_acceptance(
         "visual": contract.visual_relative_tolerance,
     }
     candidate_groups = dict(candidate.groups)
+    if set(candidate_groups) != {name for name, _values in reference.groups}:
+        raise ValueError("candidate evidence groups do not match reference")
     distances = []
     failed = []
     for name, values in reference.groups:
