@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
@@ -126,46 +127,62 @@ def select_smallest_accepted_candidate(
         )
 
     ordered = sorted(candidates, key=lambda item: (packet_lower_bound(item), item.profile_id))
-    for candidate in ordered:
-        if packet_lower_bound(candidate) > best_complete_bytes:
-            break
+    prepared_verifier.prepare_cells()
+
+    def decode_and_verify(candidate: EncodedCandidate):  # type: ignore[no-untyped-def]
         try:
             decoded = registry.decode(candidate, source.shape)
         except (OSError, RuntimeError, ValueError):
-            rejected.append(candidate.profile_id)
-            continue
-        verification = prepared_verifier.verify(source, decoded)
-        repair_payload = b""
-        status = "verified"
-        if not verification.passed:
-            repair = repair_until_verified(
-                source,
-                decoded,
-                prepared_verifier,
-                fallback_codec,
-                halo_um=halo_um,
-                mpp=grid.mean_mpp,
-                initial_verification=verification,
-                encoded_fallback=fallback,
-                fallback_decoded=fallback_decoded,
-                maximum_repair_bytes=max(
-                    0, best_complete_bytes - packet_lower_bound(candidate)
-                ),
-            )
-            if repair.status != "verified_repair":
+            return candidate, None, None
+        return candidate, decoded, prepared_verifier.verify(source, decoded)
+
+    for start in range(0, len(ordered), 2):
+        batch = [
+            candidate
+            for candidate in ordered[start : start + 2]
+            if packet_lower_bound(candidate) <= best_complete_bytes
+        ]
+        if not batch:
+            break
+        with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+            evaluated = list(pool.map(decode_and_verify, batch))
+        for candidate, decoded, verification in evaluated:
+            if packet_lower_bound(candidate) > best_complete_bytes:
+                continue
+            if decoded is None or verification is None:
                 rejected.append(candidate.profile_id)
                 continue
-            decoded = repair.decoded
-            repair_payload = repair.payload
-            status = repair.status
-        packet, breakdown = _packet_for(
-            source, candidate, decoded, repair_payload, contract, grid, fallback=False
-        )
-        result = AcceptedTileCandidate(
-            candidate, decoded, repair_payload, packet, breakdown, status, ()
-        )
-        accepted.append((len(packet), candidate.profile_id, result))
-        best_complete_bytes = min(best_complete_bytes, len(packet))
+            repair_payload = b""
+            status = "verified"
+            if not verification.passed:
+                repair = repair_until_verified(
+                    source,
+                    decoded,
+                    prepared_verifier,
+                    fallback_codec,
+                    halo_um=halo_um,
+                    mpp=grid.mean_mpp,
+                    initial_verification=verification,
+                    encoded_fallback=fallback,
+                    fallback_decoded=fallback_decoded,
+                    maximum_repair_bytes=max(
+                        0, best_complete_bytes - packet_lower_bound(candidate)
+                    ),
+                )
+                if repair.status != "verified_repair":
+                    rejected.append(candidate.profile_id)
+                    continue
+                decoded = repair.decoded
+                repair_payload = repair.payload
+                status = repair.status
+            packet, breakdown = _packet_for(
+                source, candidate, decoded, repair_payload, contract, grid, fallback=False
+            )
+            result = AcceptedTileCandidate(
+                candidate, decoded, repair_payload, packet, breakdown, status, ()
+            )
+            accepted.append((len(packet), candidate.profile_id, result))
+            best_complete_bytes = min(best_complete_bytes, len(packet))
 
     fallback_result = AcceptedTileCandidate(
         fallback,

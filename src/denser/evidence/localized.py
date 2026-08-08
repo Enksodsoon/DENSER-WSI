@@ -64,6 +64,22 @@ class PreparedLocalizedAcceptanceVerifier:
         default_factory=dict
     )
 
+    def prepare_cells(self) -> PreparedLocalizedAcceptanceVerifier:
+        acceptance_groups = tuple(name for name, _values in self._reference.groups)
+        height, width, _ = self._source.shape
+        for y in range(0, height, self.cell_size_px):
+            for x in range(0, width, self.cell_size_px):
+                cell_height = min(self.cell_size_px, height - y)
+                cell_width = min(self.cell_size_px, width - x)
+                key = (x, y, cell_width, cell_height, acceptance_groups)
+                if key not in self._cell_references:
+                    self._cell_references[key] = compute_acceptance_groups(
+                        self._source[y : y + cell_height, x : x + cell_width],
+                        self.physical_grid,
+                        groups=acceptance_groups,
+                    )
+        return self
+
     def verify(self, source: np.ndarray, decoded: np.ndarray) -> LocalizedAcceptanceResult:
         original = np.asarray(source)
         candidate = np.asarray(decoded)
@@ -77,6 +93,7 @@ class PreparedLocalizedAcceptanceVerifier:
             candidate, self.physical_grid, self.contract
         )
         comparison = compare_evidence(self._reference, candidate_evidence, self.contract)
+        self.prepare_cells()
         acceptance_groups = tuple(name for name, _values in self._reference.groups)
         height, width, _ = original.shape
         failures: list[RepairFailure] = []
@@ -85,14 +102,7 @@ class PreparedLocalizedAcceptanceVerifier:
                 cell_height = min(self.cell_size_px, height - y)
                 cell_width = min(self.cell_size_px, width - x)
                 key = (x, y, cell_width, cell_height, acceptance_groups)
-                reference = self._cell_references.get(key)
-                if reference is None:
-                    reference = compute_acceptance_groups(
-                        original[y : y + cell_height, x : x + cell_width],
-                        self.physical_grid,
-                        groups=acceptance_groups,
-                    )
-                    self._cell_references[key] = reference
+                reference = self._cell_references[key]
                 cell = compare_acceptance_groups(
                     reference,
                     compute_acceptance_groups(

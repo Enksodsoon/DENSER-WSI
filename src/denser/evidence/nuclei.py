@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from scipy import ndimage
 
 from denser.evidence.stain import (
     boundary_spectrum,
@@ -20,106 +21,45 @@ class ComponentStats:
     touches_border: bool
 
 
-def _component_runs(
-    mask: np.ndarray,
-) -> tuple[list[tuple[int, int, int]], tuple[tuple[int, ...], ...], tuple[int, int]]:
+def _labeled_components(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
     binary = np.asarray(mask, dtype=bool)
     if binary.ndim != 2:
         raise ValueError("connected-component mask must be two-dimensional")
-    runs: list[tuple[int, int, int]] = []
-    parents: list[int] = []
-
-    def find(index: int) -> int:
-        root = index
-        while parents[root] != root:
-            root = parents[root]
-        while parents[index] != index:
-            parent = parents[index]
-            parents[index] = root
-            index = parent
-        return root
-
-    def union(first: int, second: int) -> None:
-        left = find(first)
-        right = find(second)
-        if left != right:
-            parents[max(left, right)] = min(left, right)
-
-    previous: list[int] = []
-    for y, row in enumerate(binary):
-        if not row.size:
-            previous = []
-            continue
-        boundaries = np.concatenate(
-            ([0], np.flatnonzero(row[1:] != row[:-1]) + 1, [row.size])
-        )
-        if row[0]:
-            starts, ends = boundaries[0:-1:2], boundaries[1::2]
-        else:
-            starts, ends = boundaries[1:-1:2], boundaries[2::2]
-        current: list[int] = []
-        previous_cursor = 0
-        for start, end in zip(starts.tolist(), ends.tolist(), strict=True):
-            index = len(runs)
-            runs.append((y, start, end))
-            parents.append(index)
-            current.append(index)
-            while previous_cursor < len(previous) and runs[previous[previous_cursor]][2] <= start:
-                previous_cursor += 1
-            overlap_cursor = previous_cursor
-            while overlap_cursor < len(previous):
-                previous_index = previous[overlap_cursor]
-                _previous_y, previous_start, previous_end = runs[previous_index]
-                if previous_start >= end:
-                    break
-                if previous_end > start:
-                    union(index, previous_index)
-                overlap_cursor += 1
-        previous = current
-
-    grouped: dict[int, list[int]] = {}
-    for index in range(len(runs)):
-        grouped.setdefault(find(index), []).append(index)
-    return runs, tuple(tuple(indices) for indices in grouped.values()), binary.shape
+    structure = np.array(((0, 1, 0), (1, 1, 1), (0, 1, 0)), dtype=np.uint8)
+    labels, count = ndimage.label(binary, structure=structure)
+    return binary, labels, int(count)
 
 
 def connected_component_stats(mask: np.ndarray) -> tuple[ComponentStats, ...]:
-    runs, components, shape = _component_runs(mask)
-    height, width = shape
-    values = []
-    for indices in components:
-        size = 0
-        sum_y = 0
-        sum_x = 0
-        touches_border = False
-        for index in indices:
-            y, start, end = runs[index]
-            length = end - start
-            size += length
-            sum_y += y * length
-            sum_x += (start + end - 1) * length // 2
-            touches_border = (
-                touches_border
-                or y in (0, height - 1)
-                or start == 0
-                or end == width
-            )
-        values.append(ComponentStats(size, sum_y, sum_x, touches_border))
-    return tuple(values)
+    binary, labels, count = _labeled_components(mask)
+    if not count:
+        return ()
+    y_values, x_values = np.nonzero(binary)
+    component_labels = labels[y_values, x_values]
+    sizes = np.bincount(component_labels, minlength=count + 1)
+    sums_y = np.bincount(component_labels, weights=y_values, minlength=count + 1)
+    sums_x = np.bincount(component_labels, weights=x_values, minlength=count + 1)
+    border_labels = set(
+        np.concatenate((labels[0, :], labels[-1, :], labels[:, 0], labels[:, -1])).tolist()
+    ) if binary.size else set()
+    border_labels.discard(0)
+    return tuple(
+        ComponentStats(
+            int(sizes[label]),
+            int(sums_y[label]),
+            int(sums_x[label]),
+            label in border_labels,
+        )
+        for label in range(1, count + 1)
+    )
 
 
 def connected_components(mask: np.ndarray) -> tuple[tuple[tuple[int, int], ...], ...]:
-    runs, grouped, _shape = _component_runs(mask)
-    components = []
-    for indices in grouped:
-        points = tuple(
-            (y, x)
-            for index in indices
-            for y, start, end in (runs[index],)
-            for x in range(start, end)
-        )
-        components.append(points)
-    return tuple(components)
+    _binary, labels, count = _labeled_components(mask)
+    return tuple(
+        tuple((int(y), int(x)) for y, x in np.argwhere(labels == label))
+        for label in range(1, count + 1)
+    )
 
 
 def nuclear_features(
