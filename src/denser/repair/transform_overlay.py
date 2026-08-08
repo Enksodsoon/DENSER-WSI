@@ -1,29 +1,40 @@
 from __future__ import annotations
 
 import hashlib
+from functools import lru_cache
 import math
 import struct
 
 import numpy as np
 
-from denser.method.transform import BLOCK_SIZE, DCT8
 from denser.repair.mask import RepairMask, decode_repair_mask
 
 
 MAGIC = b"R2TO"
 HEADER = struct.Struct(">4sHHBBBII32s")
-COEFFICIENT = struct.Struct(">Bh")
+COEFFICIENT = struct.Struct(">Hh")
 QUANTIZATION_STEPS = (0.5, 1.0, 2.0, 4.0)
-COEFFICIENT_COUNTS = (0, 1, 2, 4, 8, 16, 32, 64, 128, 192)
+COEFFICIENT_COUNTS = (0, 4, 16, 64)
 
 
-def _blocks(mask: np.ndarray) -> tuple[tuple[int, int], ...]:
+@lru_cache(maxsize=8)
+def _dct_matrix(size: int) -> np.ndarray:
+    positions = np.arange(size, dtype=np.float64)
+    frequencies = positions[:, None]
+    matrix = np.cos(np.pi * (2 * positions + 1) * frequencies / (2 * size))
+    matrix[0] *= math.sqrt(1 / size)
+    matrix[1:] *= math.sqrt(2 / size)
+    matrix.flags.writeable = False
+    return matrix
+
+
+def _blocks(mask: np.ndarray, block_size: int) -> tuple[tuple[int, int], ...]:
     height, width = mask.shape
     return tuple(
         (y, x)
-        for y in range(0, height, BLOCK_SIZE)
-        for x in range(0, width, BLOCK_SIZE)
-        if np.any(mask[y : y + BLOCK_SIZE, x : x + BLOCK_SIZE])
+        for y in range(0, height, block_size)
+        for x in range(0, width, block_size)
+        if np.any(mask[y : y + block_size, x : x + block_size])
     )
 
 
@@ -43,6 +54,7 @@ def encode_transform_overlay(
     *,
     coefficients_per_block: int,
     quantization_step: float,
+    block_size: int = 32,
 ) -> bytes:
     original = np.asarray(source)
     decoded = np.asarray(proposal)
@@ -57,23 +69,27 @@ def encode_transform_overlay(
         raise ValueError("transform overlay requires matching uint8 RGB tiles and mask")
     if coefficients_per_block not in COEFFICIENT_COUNTS:
         raise ValueError("overlay coefficient count is not predeclared")
+    if not 8 <= block_size <= 128:
+        raise ValueError("overlay block size is outside the predeclared range")
     step_code = _step_code(quantization_step)
     height, width, _channels = original.shape
     body = bytearray()
     residual = original.astype(np.float64) - decoded.astype(np.float64)
     residual[~mask.pixels] = 0.0
-    for y, x in _blocks(mask.pixels):
-        block = np.zeros((BLOCK_SIZE, BLOCK_SIZE, 3), dtype=np.float64)
-        block_height = min(BLOCK_SIZE, height - y)
-        block_width = min(BLOCK_SIZE, width - x)
+    dct = _dct_matrix(block_size)
+    coefficient_plane = block_size * block_size
+    for y, x in _blocks(mask.pixels, block_size):
+        block = np.zeros((block_size, block_size, 3), dtype=np.float64)
+        block_height = min(block_size, height - y)
+        block_width = min(block_size, width - x)
         block[:block_height, :block_width] = residual[
             y : y + block_height, x : x + block_width
         ]
         coefficients = np.stack(
-            [DCT8 @ block[:, :, channel] @ DCT8.T for channel in range(3)]
+            [dct @ block[:, :, channel] @ dct.T for channel in range(3)]
         ).reshape(-1)
         if coefficients_per_block == 0:
-            for index in (0, 64, 128):
+            for index in (0, coefficient_plane, coefficient_plane * 2):
                 quantized = int(round(float(coefficients[index]) / quantization_step))
                 if not -32768 <= quantized <= 32767:
                     raise ValueError("overlay coefficient exceeds canonical int16 range")
@@ -96,7 +112,7 @@ def encode_transform_overlay(
         MAGIC,
         height,
         width,
-        BLOCK_SIZE,
+        block_size,
         coefficients_per_block,
         step_code,
         len(mask_bytes),
@@ -112,7 +128,7 @@ def apply_transform_overlay(proposal: np.ndarray, payload: bytes) -> np.ndarray:
     integrity = payload[HEADER.size:]
     if (
         magic != MAGIC
-        or block_size != BLOCK_SIZE
+        or not 8 <= block_size <= 128
         or count not in COEFFICIENT_COUNTS
         or step_code >= len(QUANTIZATION_STEPS)
         or len(integrity) != mask_length + body_length
@@ -125,7 +141,7 @@ def apply_transform_overlay(proposal: np.ndarray, payload: bytes) -> np.ndarray:
     mask = decode_repair_mask(integrity[:mask_length])
     if mask.shape != (height, width):
         raise ValueError("transform overlay mask dimensions are invalid")
-    blocks = _blocks(mask.pixels)
+    blocks = _blocks(mask.pixels, block_size)
     bytes_per_block = 6 if count == 0 else count * COEFFICIENT.size
     if body_length != len(blocks) * bytes_per_block:
         raise ValueError("transform-overlay coefficient length is invalid")
@@ -133,10 +149,13 @@ def apply_transform_overlay(proposal: np.ndarray, payload: bytes) -> np.ndarray:
     repaired = decoded.astype(np.float64)
     offset = 0
     step = QUANTIZATION_STEPS[step_code]
+    dct = _dct_matrix(block_size)
+    coefficient_plane = block_size * block_size
+    coefficient_total = coefficient_plane * 3
     for y, x in blocks:
-        coefficients = np.zeros(192, dtype=np.float64)
+        coefficients = np.zeros(coefficient_total, dtype=np.float64)
         if count == 0:
-            for index in (0, 64, 128):
+            for index in (0, coefficient_plane, coefficient_plane * 2):
                 quantized = struct.unpack_from(">h", body, offset)[0]
                 offset += 2
                 coefficients[index] = quantized * step
@@ -145,17 +164,17 @@ def apply_transform_overlay(proposal: np.ndarray, payload: bytes) -> np.ndarray:
             for _entry in range(count):
                 index, quantized = COEFFICIENT.unpack_from(body, offset)
                 offset += COEFFICIENT.size
-                if index <= previous or index >= 192:
+                if index <= previous or index >= coefficient_total:
                     raise ValueError("transform-overlay coefficients are noncanonical")
                 coefficients[index] = quantized * step
                 previous = index
-        coefficients = coefficients.reshape(3, BLOCK_SIZE, BLOCK_SIZE)
+        coefficients = coefficients.reshape(3, block_size, block_size)
         correction = np.stack(
-            [DCT8.T @ coefficients[channel] @ DCT8 for channel in range(3)],
+            [dct.T @ coefficients[channel] @ dct for channel in range(3)],
             axis=2,
         )
-        block_height = min(BLOCK_SIZE, height - y)
-        block_width = min(BLOCK_SIZE, width - x)
+        block_height = min(block_size, height - y)
+        block_width = min(block_size, width - x)
         local_mask = mask.pixels[y : y + block_height, x : x + block_width]
         target = repaired[y : y + block_height, x : x + block_width]
         target[local_mask] += correction[:block_height, :block_width][local_mask]

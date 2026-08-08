@@ -27,10 +27,10 @@ def test_transform_overlay_is_deterministic_compact_and_improves_error() -> None
     failure = RepairFailure(0, 0, 8, 8, 16, 16)
     mask = build_union_repair_mask((failure,), halo_um=0, mpp=0.25)
     first = encode_transform_overlay(
-        source, proposal, mask, coefficients_per_block=2, quantization_step=1.0
+        source, proposal, mask, coefficients_per_block=4, quantization_step=1.0
     )
     second = encode_transform_overlay(
-        source.copy(), proposal.copy(), mask, coefficients_per_block=2, quantization_step=1.0
+        source.copy(), proposal.copy(), mask, coefficients_per_block=4, quantization_step=1.0
     )
     repaired = apply_transform_overlay(proposal, first)
     np.testing.assert_array_equal(apply_repair_packet(proposal, first), repaired)
@@ -47,7 +47,12 @@ def test_dc_overlay_exactly_repairs_constant_block_channel_offsets() -> None:
     proposal = np.full((8, 8, 3), (70, 100, 130), dtype=np.uint8)
     mask = build_union_repair_mask((RepairFailure(0, 0, 8, 8, 8, 8),), 0, 0.25)
     encoded = encode_transform_overlay(
-        source, proposal, mask, coefficients_per_block=0, quantization_step=1.0
+        source,
+        proposal,
+        mask,
+        coefficients_per_block=0,
+        quantization_step=1.0,
+        block_size=8,
     )
     np.testing.assert_array_equal(apply_transform_overlay(proposal, encoded), source)
 
@@ -57,7 +62,7 @@ def test_transform_overlay_rejects_corruption(mutation: str) -> None:
     source, proposal = _fixture()
     mask = build_union_repair_mask((RepairFailure(0, 0, 8, 8, 16, 16),), 0, 0.25)
     encoded = bytearray(
-        encode_transform_overlay(source, proposal, mask, coefficients_per_block=1, quantization_step=2.0)
+        encode_transform_overlay(source, proposal, mask, coefficients_per_block=4, quantization_step=2.0)
     )
     if mutation == "magic":
         encoded[0] ^= 1

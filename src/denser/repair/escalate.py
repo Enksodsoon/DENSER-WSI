@@ -96,9 +96,10 @@ def repair_until_verified(
         )
 
     accepted_overlay: RepairResult | None = None
+    evidence_cell_size = max(8, min(128, round(8.0 / mpp)))
     for stage, count, step in (
         ("finer_local_quantization", 0, 1.0),
-        ("transform_coefficient_overlay", 4, 1.0),
+        ("transform_coefficient_overlay", 16, 1.0),
     ):
         stored = encode_transform_overlay(
             original,
@@ -106,6 +107,7 @@ def repair_until_verified(
             mask,
             coefficients_per_block=count,
             quantization_step=step,
+            block_size=evidence_cell_size,
         )
         if byte_dominated(len(stored)):
             break
