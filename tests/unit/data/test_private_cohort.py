@@ -4,8 +4,13 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from denser.data.models import DownloadRecord
-from denser.data.private_cohort import download_manifest_partition
+from denser.data.private_cohort import (
+    bind_verified_partition_sources,
+    download_manifest_partition,
+)
 from denser.governance.run_layout import RunLayout
 
 
@@ -92,3 +97,57 @@ def test_partition_downloader_retries_transient_failure_without_advancing(tmp_pa
     )
     assert len(result) == 1
     assert attempts == 2
+
+
+def test_verified_partition_binding_uses_research_names_and_rejects_strays(tmp_path: Path) -> None:
+    repo, run = tmp_path / "repo", tmp_path / "run"
+    repo.mkdir()
+    layout = RunLayout(repo, run)
+    layout.ensure()
+    payload = b"slide"
+    md5 = hashlib.md5(payload, usedforsecurity=False).hexdigest()
+    rows = [
+        {
+            "access": "open", "case_id": f"case-{index}",
+            "file_name": f"original-{index}.svs", "file_size": len(payload),
+            "file_uuid": f"file-{index}", "md5": md5,
+            "partition": "development", "project_id": f"TCGA-{index}",
+            "research_id": f"RS-{index}", "source_url": "https://example.invalid",
+        }
+        for index in range(2)
+    ]
+    manifest = layout.resolve("manifests", "selected.private.json")
+    manifest.write_text(json.dumps({"rows": rows}), encoding="utf-8")
+    source_root = layout.resolve("sources", "development")
+    source_root.mkdir(parents=True)
+    for index in range(2):
+        (source_root / f"RS-{index}.svs").write_bytes(payload)
+    bound = bind_verified_partition_sources(
+        manifest, layout, "development", expected_count=2
+    )
+    assert [item.path.name for item in bound] == ["RS-0.svs", "RS-1.svs"]
+    (source_root / "stray.svs").write_bytes(payload)
+    with pytest.raises(RuntimeError, match="exactly match"):
+        bind_verified_partition_sources(manifest, layout, "development", expected_count=2)
+
+
+def test_verified_partition_binding_rejects_same_size_corruption(tmp_path: Path) -> None:
+    repo, run = tmp_path / "repo", tmp_path / "run"
+    repo.mkdir()
+    layout = RunLayout(repo, run)
+    layout.ensure()
+    payload = b"slide"
+    row = {
+        "access": "open", "case_id": "case", "file_name": "original.svs",
+        "file_size": len(payload), "file_uuid": "file",
+        "md5": hashlib.md5(payload, usedforsecurity=False).hexdigest(),
+        "partition": "development", "project_id": "TCGA-X",
+        "research_id": "RS-corrupt", "source_url": "https://example.invalid",
+    }
+    manifest = layout.resolve("manifests", "selected.private.json")
+    manifest.write_text(json.dumps({"rows": [row]}), encoding="utf-8")
+    source = layout.resolve("sources", "development", "RS-corrupt.svs")
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"wrong")
+    with pytest.raises(RuntimeError, match="integrity"):
+        bind_verified_partition_sources(manifest, layout, "development", expected_count=1)

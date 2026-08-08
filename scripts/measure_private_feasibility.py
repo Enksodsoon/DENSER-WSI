@@ -16,6 +16,7 @@ from denser.codecs.quadtree import build_jpegxl_quadtree_candidates
 from denser.codecs.registry import build_default_registry
 from denser.codecs.standard import StandardLadder, build_standard_candidates
 from denser.core.canonical import canonical_json_bytes
+from denser.data.private_cohort import bind_verified_partition_sources
 from denser.evidence.calibrate import (
     acceptance_contract_from_calibration,
     calibration_record_from_dict,
@@ -174,10 +175,15 @@ def main() -> int:
     manifest = json.loads(
         layout.resolve("manifests", "selected-sources.private.json").read_text(encoding="utf-8")
     )
-    development_rows = [row for row in manifest["rows"] if row["partition"] == "development"]
     final_rows = [row for row in manifest["rows"] if row["partition"] == "final"]
-    if len(development_rows) < 6 or len(final_rows) < 18:
+    if len(final_rows) < 18:
         raise RuntimeError("reduced development and final cohorts are incomplete")
+    development_sources = bind_verified_partition_sources(
+        layout.resolve("manifests", "selected-sources.private.json"),
+        layout,
+        "development",
+        expected_count=6,
+    )
     calibration_document = json.loads(
         layout.resolve(
             "results", "development", "generation-1", "calibration-record.json"
@@ -213,11 +219,9 @@ def main() -> int:
     import openslide
 
     with _PeakContainerRss() as memory:
-        for slide_index, row in enumerate(development_rows):
-            source = layout.resolve("sources", "development", row["file_name"])
-            if not source.is_file() or source.stat().st_size != int(row["file_size"]):
-                raise RuntimeError("all six verified development sources are required")
-            slide = openslide.OpenSlide(str(source))
+        for slide_index, source in enumerate(development_sources):
+            row = source.record
+            slide = openslide.OpenSlide(str(source.path))
             try:
                 grid = _physical_grid(slide)
                 width, height = slide.dimensions
@@ -258,8 +262,8 @@ def main() -> int:
                         {
                             "slide_index": slide_index,
                             "tile_index": tile_index,
-                            "project": row["project_id"],
-                            "source_bytes": int(row["file_size"]),
+                            "project": row.project_id,
+                            "source_bytes": row.file_size,
                             "level0_tiles": tile_count,
                             "tile_pipeline_seconds": tile_pipeline_seconds,
                             "standard": {
@@ -292,7 +296,7 @@ def main() -> int:
             finally:
                 slide.close()
     timing_samples = []
-    for slide_index, row in enumerate(development_rows):
+    for slide_index, source in enumerate(development_sources):
         slide_rows = [sample for sample in samples if int(sample["slide_index"]) == slide_index]
         if not slide_rows:
             continue
@@ -300,7 +304,7 @@ def main() -> int:
         timing_samples.append(
             DevelopmentTimingSample(
                 f"slide-{slide_index}",
-                str(row["project_id"]),
+                source.record.project_id,
                 int(first["source_bytes"]),
                 int(first["level0_tiles"]),
                 tuple(float(sample["tile_pipeline_seconds"]) for sample in slide_rows),

@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from denser.core.canonical import canonical_json_bytes
+from denser.data.private_cohort import bind_verified_partition_sources
 from denser.evidence.calibrate import (
     acceptance_contract_from_calibration,
     calibrate_contract,
@@ -71,16 +72,19 @@ def main() -> int:
     control_path = arguments.repo_root / "configs" / "experiment" / "he_v1_controls.json"
     control_document = json.loads(control_path.read_text(encoding="utf-8"))
     verify_control_configuration(control_document)
-    slides = sorted(layout.resolve("sources", "development").glob("*.svs"))
-    if len(slides) < 6:
-        raise RuntimeError("all six development slides must be verified before calibration")
+    sources = bind_verified_partition_sources(
+        layout.resolve("manifests", "selected-sources.private.json"),
+        layout,
+        "development",
+        expected_count=6,
+    )
     sampled_slides: list[list[tuple[np.ndarray, str, PhysicalGrid]]] = []
-    for slide_index, slide_path in enumerate(slides):
+    for slide_index, source in enumerate(sources):
         sampled_slides.append(
             [
                 (rgb, f"slide-{slide_index:02d}-tile-{tile_index:02d}", grid)
                 for tile_index, (rgb, grid) in enumerate(
-                    _sample_tiles(slide_path, arguments.tiles_per_slide, arguments.search_grid)
+                    _sample_tiles(source.path, arguments.tiles_per_slide, arguments.search_grid)
                 )
             ]
         )
@@ -94,7 +98,7 @@ def main() -> int:
     audit = verify_calibration(calibration, list(harmful))
     document: dict[str, object] = {
         "version": "DENSER-private-development-calibration-1",
-        "slide_count": len(slides),
+        "slide_count": len(sources),
         "fit_tile_count": len(benign),
         "challenge_tile_count": len(harmful),
         "calibration": asdict(calibration),
@@ -111,7 +115,7 @@ def main() -> int:
         json.dumps(
             {
                 "status": audit.status,
-                "slides": len(slides),
+                "slides": len(sources),
                 "fit_tiles": len(benign),
                 "challenge_tiles": len(harmful),
                 "missed_challenges": len(audit.missed_control_ids),

@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from denser.core.canonical import canonical_json_bytes
@@ -15,6 +15,12 @@ from denser.governance.run_layout import RunLayout
 
 DownloadFunction = Callable[[GdcSlideRecord, Path], DownloadRecord]
 _SAFE_RESEARCH_ID = re.compile(r"^RS-[a-zA-Z0-9-]+$")
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedPrivateSource:
+    record: GdcSlideRecord
+    path: Path
 
 
 def _record(row: dict[str, object]) -> GdcSlideRecord:
@@ -81,6 +87,50 @@ def _write_ledger(path: Path, rows: list[DownloadRecord]) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_bytes(canonical_json_bytes(document) + b"\n")
     temporary.replace(path)
+
+
+def bind_verified_partition_sources(
+    manifest_path: Path,
+    layout: RunLayout,
+    partition: str,
+    *,
+    expected_count: int,
+) -> tuple[VerifiedPrivateSource, ...]:
+    """Resolve an exact, integrity-checked private source set from its manifest."""
+    if partition not in {"development", "pilot", "tuning", "final"}:
+        raise ValueError("unknown cohort partition")
+    if expected_count <= 0:
+        raise ValueError("expected source count must be positive")
+    manifest = Path(manifest_path).resolve(strict=True)
+    if not manifest.is_relative_to(layout.resolve("manifests")):
+        raise ValueError("private source manifest must remain beneath run manifests")
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    raw_rows = document.get("rows")
+    if not isinstance(raw_rows, list):
+        raise ValueError("private source manifest rows are invalid")
+    selected = [row for row in raw_rows if isinstance(row, dict) and row.get("partition") == partition]
+    selected.sort(key=lambda row: (str(row.get("project_id")), str(row.get("research_id"))))
+    if len(selected) != expected_count:
+        raise RuntimeError("private partition does not contain the exact expected source count")
+    records = tuple(_record(row) for row in selected)
+    if len({record.research_id for record in records}) != len(records):
+        raise RuntimeError("private partition research identifiers are not unique")
+    if len({record.case_id for record in records}) != len(records):
+        raise RuntimeError("private partition cases are not disjoint")
+    source_root = layout.resolve("sources", partition)
+    expected_paths = tuple(
+        layout.resolve("sources", partition, f"{record.research_id}.svs")
+        for record in records
+    )
+    observed_paths = set(source_root.glob("*.svs")) if source_root.exists() else set()
+    if observed_paths != set(expected_paths):
+        raise RuntimeError("private source files do not exactly match the bound manifest")
+    bound = []
+    for record, path in zip(records, expected_paths, strict=True):
+        if record.access != "open" or _verify_existing(record, path) is None:
+            raise RuntimeError("private source integrity verification failed")
+        bound.append(VerifiedPrivateSource(record, path))
+    return tuple(bound)
 
 
 def download_manifest_partition(
