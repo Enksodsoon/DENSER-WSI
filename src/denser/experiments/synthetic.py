@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 import struct
 from dataclasses import dataclass
@@ -96,8 +97,12 @@ def _packet(
     candidate: EncodedCandidate,
     contract: AcceptanceContract,
     repair_trace: bytes,
+    certificate=None,  # type: ignore[no-untyped-def]
 ) -> tuple[bytes, ByteBreakdown]:
-    certificate = build_certificate(tile, candidate, contract)
+    if certificate is None:
+        certificate = build_certificate(tile, candidate, contract)
+    elif certificate.packet_sha256 != hashlib.sha256(candidate.payload).hexdigest():
+        raise ValueError("prebuilt certificate does not match the candidate packet")
     cert_bytes = encode_certificate(certificate)
     reference_bytes = certificate.reference_payload.encoded_bytes if certificate.reference_payload else 0
     codec_kind = 0 if candidate.codec_id == SharedLosslessCodec.codec_id else 1

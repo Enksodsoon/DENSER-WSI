@@ -24,3 +24,21 @@
   cap, before certificate, repair, and container overhead. The reduced real run is therefore
   classified `resource_limited`; scientific outcome is `not_evaluable`. No final holdout was
   opened or compressed, and no compression-performance conclusion is reported.
+
+## 2026-08-08 — Catalog intake and bounded performance revision
+
+- The supplied 263-row public WSI catalog was admitted as discovery metadata,
+  not as an experimental cohort. Its supplied shell downloader was not run.
+- Three independently checksum-resolved fixtures covering Aperio, JPEG 2000,
+  and multi-file MIRAX decoding were downloaded into the private run root.
+  Pinned OpenSlide 4.0.1 opened all three. They are permanently ineligible for
+  primary development, pilot, tuning, and final partitions.
+- Deterministic two-way candidate encoding, a process-wide two-codec semaphore,
+  level-6 fixed-Huffman entropy coding with a new versioned entropy ID, and a
+  row-run connected-component implementation reduced the measured three-tile
+  verified path to about 1.13 wall-seconds per tile with two workers. Six
+  workers oversubscribed this host, so the resource-aware limit is lowered to
+  two for real execution.
+- The measured development slide still projects to roughly 8.9 wall-hours.
+  The run therefore remains `resource_limited` and scientifically
+  `not_evaluable`; the final holdout remains unopened.

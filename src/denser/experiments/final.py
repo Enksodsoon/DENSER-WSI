@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
@@ -36,12 +37,15 @@ class FinalHoldoutConfig:
     sampled_tile_extrapolation_for_primary_endpoint_allowed: bool = False
     methods: tuple[str, ...] = ("standard", "uniform", "denser")
     candidate_steps: tuple[float, ...] = (1.0, 2.0, 4.0)
+    cpu_workers: int = 6
 
     def __post_init__(self) -> None:
         if self.sampled_tile_extrapolation_for_primary_endpoint_allowed:
             raise ValueError("sampled tile extrapolation is prohibited for the primary endpoint")
         if self.methods != ("standard", "uniform", "denser"):
             raise ValueError("final method set is frozen")
+        if not 1 <= self.cpu_workers <= 6:
+            raise ValueError("final CPU workers must be between one and six")
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,26 +103,37 @@ def run_final_holdout(
         for method in config.methods:
             path = root / f"final-{slide_number:03d}.{method}.mcv1"
             writer = McV1Writer(path)
-            try:
-                for address in addresses:
-                    tile = np.asarray(slide.read_tile(address))
-                    expected_shape = (address.height, address.width, 3)
-                    if tile.dtype != np.uint8 or tile.shape != expected_shape:
-                        raise ValueError("final tile loader returned invalid pixels")
-                    candidate = _candidate_for(method, tile, profile)
+
+            def encode_address(address: TileAddress):  # type: ignore[no-untyped-def]
+                violation = 0
+                tile = np.asarray(slide.read_tile(address))
+                expected_shape = (address.height, address.width, 3)
+                if tile.dtype != np.uint8 or tile.shape != expected_shape:
+                    raise ValueError("final tile loader returned invalid pixels")
+                candidate = _candidate_for(method, tile, profile)
+                decoded = _decoded(candidate, expected_shape)
+                certificate = build_certificate(tile, candidate, contract)
+                if not verify_certificate(decoded, certificate, contract).passed:
+                    candidate = SharedLosslessCodec().encode(tile)
                     decoded = _decoded(candidate, expected_shape)
                     certificate = build_certificate(tile, candidate, contract)
                     if not verify_certificate(decoded, certificate, contract).passed:
-                        candidate = SharedLosslessCodec().encode(tile)
-                        decoded = _decoded(candidate, expected_shape)
-                        certificate = build_certificate(tile, candidate, contract)
-                        if not verify_certificate(decoded, certificate, contract).passed:
-                            unresolved += 1
-                    packet, breakdown = _packet(method, tile, candidate, contract, b"")
-                    writer.add_tile(address, packet, breakdown)
-                    key = (method, address)
-                    counts[key] = counts.get(key, 0) + 1
-                    encoded_addresses.add(address)
+                        violation = 1
+                packet, breakdown = _packet(
+                    method, tile, candidate, contract, b"", certificate=certificate
+                )
+                return address, packet, breakdown, violation
+
+            try:
+                tile_workers = max(1, min(3, config.cpu_workers // 2))
+                with ThreadPoolExecutor(max_workers=tile_workers) as pool:
+                    encoded = pool.map(encode_address, addresses)
+                    for address, packet, breakdown, violation in encoded:
+                        unresolved += violation
+                        writer.add_tile(address, packet, breakdown)
+                        key = (method, address)
+                        counts[key] = counts.get(key, 0) + 1
+                        encoded_addresses.add(address)
                 writer.finalize()
             except Exception:
                 writer.abort()

@@ -1,35 +1,68 @@
 from __future__ import annotations
 
-from collections import deque
-
 import numpy as np
 
 
 def connected_components(mask: np.ndarray) -> tuple[tuple[tuple[int, int], ...], ...]:
     binary = np.asarray(mask, dtype=bool)
-    visited = np.zeros(binary.shape, dtype=bool)
-    components: list[tuple[tuple[int, int], ...]] = []
-    height, width = binary.shape
-    for start_y in range(height):
-        for start_x in range(width):
-            if not binary[start_y, start_x] or visited[start_y, start_x]:
-                continue
-            queue = deque([(start_y, start_x)])
-            visited[start_y, start_x] = True
-            points: list[tuple[int, int]] = []
-            while queue:
-                y, x = queue.popleft()
-                points.append((y, x))
-                for next_y, next_x in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
-                    if (
-                        0 <= next_y < height
-                        and 0 <= next_x < width
-                        and binary[next_y, next_x]
-                        and not visited[next_y, next_x]
-                    ):
-                        visited[next_y, next_x] = True
-                        queue.append((next_y, next_x))
-            components.append(tuple(points))
+    if binary.ndim != 2:
+        raise ValueError("connected-component mask must be two-dimensional")
+    runs: list[tuple[int, int, int]] = []
+    parents: list[int] = []
+
+    def find(index: int) -> int:
+        root = index
+        while parents[root] != root:
+            root = parents[root]
+        while parents[index] != index:
+            parent = parents[index]
+            parents[index] = root
+            index = parent
+        return root
+
+    def union(first: int, second: int) -> None:
+        left = find(first)
+        right = find(second)
+        if left != right:
+            parents[max(left, right)] = min(left, right)
+
+    previous: list[int] = []
+    for y, row in enumerate(binary):
+        transitions = np.diff(np.pad(row.astype(np.int8), (1, 1)))
+        starts = np.flatnonzero(transitions == 1)
+        ends = np.flatnonzero(transitions == -1)
+        current: list[int] = []
+        previous_cursor = 0
+        for start, end in zip(starts.tolist(), ends.tolist(), strict=True):
+            index = len(runs)
+            runs.append((y, start, end))
+            parents.append(index)
+            current.append(index)
+            while previous_cursor < len(previous) and runs[previous[previous_cursor]][2] <= start:
+                previous_cursor += 1
+            overlap_cursor = previous_cursor
+            while overlap_cursor < len(previous):
+                previous_index = previous[overlap_cursor]
+                _previous_y, previous_start, previous_end = runs[previous_index]
+                if previous_start >= end:
+                    break
+                if previous_end > start:
+                    union(index, previous_index)
+                overlap_cursor += 1
+        previous = current
+
+    grouped: dict[int, list[int]] = {}
+    for index in range(len(runs)):
+        grouped.setdefault(find(index), []).append(index)
+    components = []
+    for indices in grouped.values():
+        points = tuple(
+            (y, x)
+            for index in indices
+            for y, start, end in (runs[index],)
+            for x in range(start, end)
+        )
+        components.append(points)
     return tuple(components)
 
 

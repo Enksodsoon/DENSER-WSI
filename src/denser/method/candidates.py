@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import struct
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
@@ -16,7 +17,7 @@ from denser.method.transform import forward_transform, inverse_transform
 MAGIC = b"DNQ1"
 HEADER = struct.Struct(">4sHHHHBBfII32s")
 BASIS_ID = "block-dct8-rgb-v1"
-ENTROPY_MODEL_ID = "int32-zlib-fixed-v1"
+ENTROPY_MODEL_ID = "int32-zlib-fixed-level6-v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +39,7 @@ class CandidateProfile:
 
 
 def _compress(raw: bytes) -> bytes:
-    compressor = zlib.compressobj(9, zlib.DEFLATED, -15, 9, zlib.Z_FIXED)
+    compressor = zlib.compressobj(6, zlib.DEFLATED, -15, 9, zlib.Z_FIXED)
     return compressor.compress(raw) + compressor.flush(zlib.Z_FINISH)
 
 
@@ -96,14 +97,16 @@ def build_uniform_candidates(
 ) -> list[EncodedCandidate]:
     pixels = np.asarray(rgb, dtype=np.uint8)
     coefficients, _ = forward_transform(pixels)
-    return [
-        _candidate(
+
+    def build(step: float) -> EncodedCandidate:
+        return _candidate(
             _packet(pixels, coefficients, step, None),
             f"uniform-q{step:g}",
             profile,
         )
-        for step in profile.quantization_steps
-    ]
+
+    with ThreadPoolExecutor(max_workers=min(2, len(profile.quantization_steps))) as pool:
+        return list(pool.map(build, profile.quantization_steps))
 
 
 def build_denser_candidates(
@@ -116,8 +119,9 @@ def build_denser_candidates(
     coefficients, _ = forward_transform(pixels)
     sensitivity_coefficients, _ = forward_transform(np.abs(sensitivity_values))
     weights = np.abs(sensitivity_coefficients) + 1e-12
-    return [
-        _candidate(
+
+    def build(step: float) -> EncodedCandidate:
+        return _candidate(
             _packet(
                 pixels,
                 coefficients,
@@ -127,8 +131,9 @@ def build_denser_candidates(
             f"denser-q{step:g}",
             profile,
         )
-        for step in profile.quantization_steps
-    ]
+
+    with ThreadPoolExecutor(max_workers=min(2, len(profile.quantization_steps))) as pool:
+        return list(pool.map(build, profile.quantization_steps))
 
 
 def decode_transform_candidate(payload: bytes) -> np.ndarray:

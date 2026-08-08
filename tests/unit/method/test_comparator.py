@@ -43,3 +43,8 @@ def test_denser_weighting_changes_packet_but_not_coder_identity() -> None:
     assert uniform.payload != denser.payload
     assert uniform.basis_id == denser.basis_id
     assert uniform.entropy_model_id == denser.entropy_model_id
+
+
+def test_matched_entropy_model_uses_versioned_fixed_level_six() -> None:
+    candidate = build_uniform_candidates(_rgb(), CandidateProfile((2.0,)))[0]
+    assert candidate.entropy_model_id == "int32-zlib-fixed-level6-v2"
