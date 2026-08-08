@@ -7,6 +7,7 @@ from denser.certificates.verify import verify_certificate
 from denser.codecs.base import EncodedCandidate
 from denser.codecs.lossless import SharedLosslessCodec
 from denser.codecs.registry import CodecRegistry
+from denser.container.packet_v2 import HEADER as TILE_PACKET_HEADER
 from denser.container.packet_v2 import McV2TilePacket
 from denser.core.models import ByteBreakdown
 from denser.evidence.localized import LocalizedAcceptanceVerifier
@@ -77,6 +78,37 @@ def test_selection_skips_candidates_whose_bytes_cannot_beat_current_best() -> No
     )
     assert selected.breakdown.complete == len(selected.packet)
     assert "huge" not in calls
+
+
+def test_selection_counts_unavoidable_certificate_bytes_before_decoding() -> None:
+    source = np.arange(8 * 8 * 3, dtype=np.uint8).reshape(8, 8, 3)
+    contract = AcceptanceContract()
+    grid = PhysicalGrid(0.25, 0.25)
+    baseline = select_smallest_accepted_candidate(
+        source, [], CodecRegistry(), contract, grid, cell_size_px=8
+    )
+    calls = 0
+    registry = CodecRegistry()
+
+    def decode(payload, allocation, shape, profile):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        return source.copy()
+
+    registry.register("fixture", decode)
+    identity_bytes = len("fixture".encode("ascii")) + len("near".encode("ascii"))
+    old_bound_payload = max(
+        1, baseline.breakdown.complete - TILE_PACKET_HEADER.size - identity_bytes - 1
+    )
+    select_smallest_accepted_candidate(
+        source,
+        [_candidate("near", b"x" * old_bound_payload)],
+        registry,
+        contract,
+        grid,
+        cell_size_px=8,
+    )
+    assert calls == 0
 
 
 def test_selection_reuses_only_a_matching_prepared_source_verifier() -> None:

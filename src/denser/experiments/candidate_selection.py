@@ -12,6 +12,7 @@ from denser.codecs.lossless import SharedLosslessCodec
 from denser.codecs.registry import CodecRegistry
 from denser.container.packet_v2 import HEADER as TILE_PACKET_HEADER
 from denser.container.packet_v2 import McV2TilePacket
+from denser.core.canonical import canonical_json_bytes
 from denser.core.models import ByteBreakdown
 from denser.evidence.localized import (
     LocalizedAcceptanceVerifier,
@@ -102,15 +103,26 @@ def select_smallest_accepted_candidate(
         source, fallback, fallback_decoded, b"", contract, grid, fallback=True
     )
     best_complete_bytes = len(fallback_packet)
+    fallback_identity_bytes = len(
+        canonical_json_bytes(f"{fallback.codec_id}:{fallback.profile_id}")
+    )
 
     def packet_lower_bound(candidate: EncodedCandidate) -> int:
+        candidate_identity_bytes = len(
+            canonical_json_bytes(f"{candidate.codec_id}:{candidate.profile_id}")
+        )
+        certificate_bytes = (
+            fallback_breakdown.certificate
+            - fallback_identity_bytes
+            + candidate_identity_bytes
+        )
         return (
             TILE_PACKET_HEADER.size
             + len(candidate.codec_id.encode("ascii"))
             + len(candidate.profile_id.encode("ascii"))
             + len(candidate.allocation_map)
             + len(candidate.payload)
-            + 1  # MC-V2 requires a non-empty certificate.
+            + certificate_bytes
         )
 
     ordered = sorted(candidates, key=lambda item: (packet_lower_bound(item), item.profile_id))

@@ -89,7 +89,9 @@ def test_final_forbids_sample_extrapolation(tmp_path: Path) -> None:
     assert not config.sampled_tile_extrapolation_for_primary_endpoint_allowed
 
 
-def test_final_builds_one_certificate_per_candidate_and_fallback(tmp_path: Path, monkeypatch) -> None:
+def test_final_skips_certificates_for_byte_dominated_candidates(
+    tmp_path: Path, monkeypatch
+) -> None:
     calls = 0
     real_build = selection_module.build_certificate
 
@@ -120,4 +122,4 @@ def test_final_builds_one_certificate_per_candidate_and_fallback(tmp_path: Path,
         manifest,
         create_freeze_record(context),
     )
-    assert calls == 10
+    assert calls == 7
