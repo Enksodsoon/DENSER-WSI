@@ -12,7 +12,10 @@ from denser.container.packet_v2 import McV2TilePacket
 from denser.core.models import ByteBreakdown
 from denser.evidence.localized import LocalizedAcceptanceVerifier
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
-from denser.experiments.candidate_selection import select_smallest_accepted_candidate
+from denser.experiments.candidate_selection import (
+    choose_smallest_accepted_result,
+    select_smallest_accepted_candidate,
+)
 
 
 def _candidate(profile: str, payload: bytes) -> EncodedCandidate:
@@ -37,6 +40,27 @@ def test_selection_uses_smallest_complete_accepted_mcv2_packet() -> None:
     certificate = decode_certificate(packet.certificate)
     assert verify_certificate(selected.decoded, certificate, AcceptanceContract()).passed
     assert selected.breakdown.complete == len(selected.packet)
+
+
+def test_extension_portfolio_retains_smaller_baseline_result() -> None:
+    source = np.zeros((8, 8, 3), dtype=np.uint8)
+    contract = AcceptanceContract()
+    grid = PhysicalGrid(0.25, 0.25)
+    registry = CodecRegistry()
+    registry.register("fixture", lambda payload, allocation, shape, profile: source.copy())
+    small = select_smallest_accepted_candidate(
+        source, [_candidate("baseline", b"x")], registry, contract, grid, cell_size_px=8
+    )
+    large = select_smallest_accepted_candidate(
+        source,
+        [_candidate("extension", b"x" * 128)],
+        registry,
+        contract,
+        grid,
+        cell_size_px=8,
+    )
+    assert choose_smallest_accepted_result(small, large) is small
+    assert choose_smallest_accepted_result(large, small) is small
 
 
 def test_selection_falls_back_when_no_candidate_beats_verified_lossless() -> None:
@@ -139,6 +163,31 @@ def test_selection_reuses_only_a_matching_prepared_source_verifier() -> None:
             cell_size_px=8,
             prepared_verifier=prepared,
         )
+
+
+def test_exact_candidate_does_not_run_localized_comparison(monkeypatch) -> None:
+    source = np.arange(8 * 8 * 3, dtype=np.uint8).reshape(8, 8, 3)
+    contract = AcceptanceContract()
+    grid = PhysicalGrid(0.25, 0.25)
+    prepared = LocalizedAcceptanceVerifier(contract, 8, grid).prepare(source)
+
+    def unexpected(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("exact candidates do not require localized comparison")
+
+    monkeypatch.setattr(type(prepared), "prepare_cells", unexpected)
+    monkeypatch.setattr(type(prepared), "verify", unexpected)
+    registry = CodecRegistry()
+    registry.register("fixture", lambda payload, allocation, shape, profile: source.copy())
+    selected = select_smallest_accepted_candidate(
+        source,
+        [_candidate("exact", b"x")],
+        registry,
+        contract,
+        grid,
+        cell_size_px=8,
+        prepared_verifier=prepared,
+    )
+    assert selected.candidate.profile_id == "exact"
 
 
 def test_standard_portfolio_uses_frozen_jpeg90_as_initial_byte_bound() -> None:

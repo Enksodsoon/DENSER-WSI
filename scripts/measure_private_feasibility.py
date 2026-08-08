@@ -12,7 +12,6 @@ import time
 
 import numpy as np
 
-from denser.codecs.quadtree import build_jpeg_quadtree_candidates
 from denser.codecs.registry import build_default_registry
 from denser.codecs.source_segments import build_source_segment_candidate_from_svs
 from denser.codecs.standard import StandardLadder, build_standard_candidates
@@ -30,15 +29,12 @@ from denser.evidence.localized import (
 from denser.evidence.types import PhysicalGrid
 from denser.experiments.candidate_selection import (
     AcceptedTileCandidate,
+    choose_smallest_accepted_result,
     decode_and_verify_tile_packet,
     select_smallest_accepted_candidate,
 )
 from denser.governance.run_layout import RunLayout
-from denser.method.candidates import (
-    CandidateProfile,
-    build_denser_candidates,
-    build_uniform_candidates,
-)
+from denser.method.candidates import CandidateProfile, build_uniform_candidates
 from denser.orchestration.breakthrough import FeasibilityEvidence, evaluate_generation_gate
 from denser.orchestration.runtime_projection import (
     DevelopmentTimingSample,
@@ -121,15 +117,6 @@ def _sample_tiles(
             )
         )
     return sampled
-
-
-def _sensitivity(rgb: np.ndarray) -> np.ndarray:
-    values = rgb.astype(np.float64)
-    sensitivity = np.empty_like(values)
-    for channel in range(3):
-        gy, gx = np.gradient(values[:, :, channel])
-        sensitivity[:, :, channel] = np.hypot(gx, gy) + 1.0
-    return sensitivity
 
 
 def _measure_selection(
@@ -216,11 +203,11 @@ def main() -> int:
         "results",
         "development",
         "generation-1",
-        "feasibility-source-segments.private.json",
+        "feasibility-source-extension.private.json",
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     identity = {
-        "version": "DENSER-private-feasibility-source-segments-1",
+        "version": "DENSER-private-feasibility-source-extension-1",
         "code_commit": arguments.code_commit,
         "image_digest": arguments.image_digest,
         "calibration_digest": calibration.sha256,
@@ -289,21 +276,21 @@ def main() -> int:
                         prepared_verifier,
                     )
                     started = time.perf_counter()
-                    sensitivity = _sensitivity(rgb)
-                    denser_candidates = build_denser_candidates(rgb, sensitivity, profile)
-                    denser_candidates.extend(build_jpeg_quadtree_candidates(rgb, sensitivity))
-                    denser_candidates.append(
+                    source_candidates = [
                         build_source_segment_candidate_from_svs(source.path, address)
-                    )
-                    denser_build = time.perf_counter() - started
-                    denser, denser_select = _measure_selection(
+                    ]
+                    source_build = time.perf_counter() - started
+                    source_selected, source_select = _measure_selection(
                         rgb,
-                        denser_candidates,
+                        source_candidates,
                         registry,
                         contract,
                         grid,
                         prepared_verifier,
                     )
+                    denser = choose_smallest_accepted_result(standard, source_selected)
+                    denser_build = standard_build + source_build
+                    denser_select = standard_select + source_select
                     tile_pipeline_seconds = time.perf_counter() - total_started
                     standard_cold, standard_warm = _decode_seconds(
                         standard, rgb.shape, registry, contract
@@ -325,6 +312,7 @@ def main() -> int:
                                 "select_seconds": standard_select,
                                 "complete_bytes": standard.breakdown.complete,
                                 "status": standard.status,
+                                "profile": standard.candidate.profile_id,
                                 "decode_cold_seconds": standard_cold,
                                 "decode_warm_seconds": standard_warm,
                                 "rejected_profiles": len(standard.rejected_profiles),
@@ -338,7 +326,8 @@ def main() -> int:
                                 "rejected_profiles": len(uniform.rejected_profiles),
                             },
                             "denser": {
-                                "candidate_count": len(denser_candidates),
+                                "candidate_count": len(standard_candidates)
+                                + len(source_candidates),
                                 "build_seconds": denser_build,
                                 "select_seconds": denser_select,
                                 "complete_bytes": denser.breakdown.complete,

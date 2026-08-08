@@ -34,6 +34,21 @@ class AcceptedTileCandidate:
     rejected_profiles: tuple[str, ...]
 
 
+def choose_smallest_accepted_result(
+    *results: AcceptedTileCandidate,
+) -> AcceptedTileCandidate:
+    if not results:
+        raise ValueError("accepted-result comparison requires at least one result")
+    return min(
+        results,
+        key=lambda result: (
+            result.breakdown.complete,
+            result.candidate.codec_id,
+            result.candidate.profile_id,
+        ),
+    )
+
+
 def _packet_for(
     source: np.ndarray,
     candidate: EncodedCandidate,
@@ -139,7 +154,6 @@ def select_smallest_accepted_candidate(
         if initial_bound is not None
         else ordered
     )
-    prepared_verifier.prepare_cells()
     for index, candidate in enumerate(evaluation_order):
         if packet_lower_bound(candidate) > best_complete_bytes:
             if index == 0 and candidate is initial_bound:
@@ -150,10 +164,12 @@ def select_smallest_accepted_candidate(
         except (OSError, RuntimeError, ValueError):
             rejected.append(candidate.profile_id)
             continue
-        verification = prepared_verifier.verify(source, decoded)
         repair_payload = b""
         status = "verified"
-        if not verification.passed:
+        exact = np.array_equal(source, decoded)
+        if not exact:
+            verification = prepared_verifier.verify(source, decoded)
+        if not exact and not verification.passed:
             repair = repair_until_verified(
                 source,
                 decoded,
