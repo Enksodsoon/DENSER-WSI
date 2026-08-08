@@ -38,3 +38,32 @@ class AllocationEvidence:
 
     def vector(self) -> tuple[float, ...]:
         return tuple(value for _name, value in self.features)
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptanceContract:
+    version: str = "HE-V1-acceptance-1"
+    nuclear_relative_tolerance: float = 0.12
+    architecture_relative_tolerance: float = 0.12
+    sentinel_relative_tolerance: float = 0.01
+    visual_relative_tolerance: float = 0.20
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptanceEvidence:
+    version: str
+    groups: tuple[tuple[str, tuple[float, ...]], ...]
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptanceComparison:
+    distances: tuple[tuple[str, float], ...]
+    failed_groups: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AuditEvidence:
+    version: str
+    features: tuple[tuple[str, float], ...]
+    sha256: str
