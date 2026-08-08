@@ -135,8 +135,8 @@ def write_final_report(output_root: Path, inputs: FinalReportInputs) -> FinalRep
     (root / "limitations.md").write_text(limitations, encoding="utf-8", newline="\n")
     summary = (
         "# DENSER-WSI Final Report\n\n"
-        f"Execution status: `{bundle.execution_status}`  \n"
-        f"Scientific outcome: `{bundle.scientific_outcome}`  \n"
+        f"Execution status: `{bundle.execution_status}`\n\n"
+        f"Scientific outcome: `{bundle.scientific_outcome}`\n\n"
         f"Evaluable final slides: {bundle.evaluable_slides}/{bundle.expected_slides}\n\n"
         "The execution status and scientific outcome are separate. Missing, failed, larger, "
         "or unavailable results are retained. No clinical or universal-preservation claim is made.\n"
@@ -148,7 +148,25 @@ def write_final_report(output_root: Path, inputs: FinalReportInputs) -> FinalRep
         "SPDXID": "SPDXRef-DOCUMENT",
         "name": "DENSER-WSI-final-runtime",
         "documentNamespace": f"https://github.com/Enksodsoon/DENSER-WSI/sbom/{bundle.completion_marker.artifact_digest}",
-        "packages": [],
+        "packages": [
+            {
+                "name": name,
+                "SPDXID": f"SPDXRef-Package-{name}",
+                "versionInfo": version,
+                "downloadLocation": "NOASSERTION",
+                "filesAnalyzed": False,
+            }
+            for name, version in (
+                ("python", "3.12.13"),
+                ("openslide", "4.0.1"),
+                ("libvips", "8.18.4"),
+                ("libjpeg-turbo", "3.2.0"),
+                ("openjpeg", "2.5.4"),
+                ("libjxl", "0.12.0"),
+                ("libavif", "1.4.1"),
+                ("zstd", "1.5.7"),
+            )
+        ],
     }
     (root / "software-bill-of-materials.spdx.json").write_bytes(canonical_json_bytes(sbom) + b"\n")
     artifact_names = (
