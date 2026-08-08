@@ -3,7 +3,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from denser.evidence.architecture import compare_acceptance
+from denser.evidence.architecture import (
+    compare_acceptance,
+    compute_acceptance_evidence,
+)
 from denser.evidence.nuclei import nuclear_features
 from denser.evidence.sentinels import sentinel_features
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
@@ -70,3 +73,24 @@ def test_object_and_sentinel_evidence_use_physical_area_not_pixel_area() -> None
     coarse_sentinel = sentinel_features(coarse, coarse_grid)
     assert fine_nuclear[:2] == pytest.approx(coarse_nuclear[:2])
     assert fine_sentinel[:2] == pytest.approx(coarse_sentinel[:2])
+
+
+def test_acceptance_evidence_can_compute_only_globally_failed_groups() -> None:
+    rgb = np.full((16, 16, 3), 180, dtype=np.uint8)
+    evidence = compute_acceptance_evidence(
+        rgb,
+        PhysicalGrid(0.25, 0.25),
+        AcceptanceContract(),
+        groups=("visual", "nuclear_objects"),
+    )
+    assert [name for name, _values in evidence.groups] == [
+        "nuclear_objects",
+        "visual",
+    ]
+    with pytest.raises(ValueError, match="acceptance group"):
+        compute_acceptance_evidence(
+            rgb,
+            PhysicalGrid(0.25, 0.25),
+            AcceptanceContract(),
+            groups=("unknown",),
+        )

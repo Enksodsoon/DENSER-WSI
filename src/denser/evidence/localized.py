@@ -55,7 +55,9 @@ class PreparedLocalizedAcceptanceVerifier:
     _source: np.ndarray
     _source_sha256: str
     _reference: AcceptanceEvidence
-    _cell_references: dict[tuple[int, int, int, int], AcceptanceEvidence] = field(
+    _cell_references: dict[
+        tuple[int, int, int, int, tuple[str, ...]], AcceptanceEvidence
+    ] = field(
         default_factory=dict
     )
 
@@ -74,19 +76,21 @@ class PreparedLocalizedAcceptanceVerifier:
         comparison = compare_evidence(self._reference, candidate_evidence, self.contract)
         if not comparison.failed_groups:
             return LocalizedAcceptanceResult(True, ())
+        failed_groups = comparison.failed_groups
         height, width, _ = original.shape
         failures: list[RepairFailure] = []
         for y in range(0, height, self.cell_size_px):
             for x in range(0, width, self.cell_size_px):
                 cell_height = min(self.cell_size_px, height - y)
                 cell_width = min(self.cell_size_px, width - x)
-                key = (x, y, cell_width, cell_height)
+                key = (x, y, cell_width, cell_height, failed_groups)
                 reference = self._cell_references.get(key)
                 if reference is None:
                     reference = compute_acceptance_evidence(
                         original[y : y + cell_height, x : x + cell_width],
                         self.physical_grid,
                         self.contract,
+                        groups=failed_groups,
                     )
                     self._cell_references[key] = reference
                 cell = compare_evidence(
@@ -95,6 +99,7 @@ class PreparedLocalizedAcceptanceVerifier:
                         candidate[y : y + cell_height, x : x + cell_width],
                         self.physical_grid,
                         self.contract,
+                        groups=failed_groups,
                     ),
                     self.contract,
                 )

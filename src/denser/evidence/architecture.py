@@ -37,17 +37,37 @@ def architecture_features(
 
 
 def compute_acceptance_evidence(
-    rgb: np.ndarray, physical_grid: PhysicalGrid, contract: AcceptanceContract
+    rgb: np.ndarray,
+    physical_grid: PhysicalGrid,
+    contract: AcceptanceContract,
+    *,
+    groups: tuple[str, ...] | None = None,
 ) -> AcceptanceEvidence:
-    groups = (
-        ("nuclear_objects", nuclear_features(rgb, physical_grid)),
-        ("architecture", architecture_features(rgb, physical_grid)),
-        ("rare_event_sentinels", sentinel_features(rgb, physical_grid)),
-        ("visual", visual_features(rgb)),
+    ordered_names = (
+        "nuclear_objects",
+        "architecture",
+        "rare_event_sentinels",
+        "visual",
     )
+    selected = set(ordered_names if groups is None else groups)
+    if not selected or not selected.issubset(ordered_names):
+        raise ValueError("unknown or empty acceptance group selection")
+    extracted = []
+    for name in ordered_names:
+        if name not in selected:
+            continue
+        if name == "nuclear_objects":
+            values = nuclear_features(rgb, physical_grid)
+        elif name == "architecture":
+            values = architecture_features(rgb, physical_grid)
+        elif name == "rare_event_sentinels":
+            values = sentinel_features(rgb, physical_grid)
+        else:
+            values = visual_features(rgb)
+        extracted.append((name, values))
     rounded = tuple(
         (name, tuple(round(float(value), 12) for value in values))
-        for name, values in groups
+        for name, values in extracted
     )
     document = {
         "version": contract.version,
