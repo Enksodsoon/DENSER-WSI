@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Enksodsoon/DENSER-WSI/schemas/evidence_certificate.schema.json",
+  "title": "HE-V1 evidence certificate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "mode", "self_verifying", "contract_digest", "implementation_digest",
+    "physical_scale", "reference_payload", "candidate_id", "fallback_id",
+    "repair_region_hex", "decoded_evidence_sha256", "packet_sha256",
+    "decoded_rgb_sha256", "verification_status", "certificate_digest"
+  ],
+  "properties": {
+    "version": {"const": "HE-V1-certificate-1"},
+    "mode": {"enum": ["self_verifying", "attested_digest"]},
+    "self_verifying": {"type": "boolean"},
+    "contract_digest": {"$ref": "#/$defs/digest"},
+    "implementation_digest": {"$ref": "#/$defs/digest"},
+    "physical_scale": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mpp_x", "mpp_y"],
+      "properties": {
+        "mpp_x": {"type": "number", "minimum": 0.05, "maximum": 5.0},
+        "mpp_y": {"type": "number", "minimum": 0.05, "maximum": 5.0}
+      }
+    },
+    "reference_payload": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["version", "quantization", "max_absolute_error", "groups"],
+      "properties": {
+        "version": {"const": "HE-V1-acceptance-1"},
+        "quantization": {"type": "number", "exclusiveMinimum": 0},
+        "max_absolute_error": {"type": "number", "minimum": 0},
+        "groups": {"type": "array", "minItems": 1}
+      }
+    },
+    "candidate_id": {"type": "string", "minLength": 1},
+    "fallback_id": {"type": "string", "minLength": 1},
+    "repair_region_hex": {"type": "string", "pattern": "^[0-9a-f]*$"},
+    "decoded_evidence_sha256": {"$ref": "#/$defs/digest"},
+    "packet_sha256": {"$ref": "#/$defs/digest"},
+    "decoded_rgb_sha256": {"$ref": "#/$defs/digest"},
+    "verification_status": {"enum": ["encoder_verified", "failed"]},
+    "certificate_digest": {"$ref": "#/$defs/digest"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

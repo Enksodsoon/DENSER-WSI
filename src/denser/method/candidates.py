@@ -179,3 +179,8 @@ def decode_transform_candidate(payload: bytes) -> np.ndarray:
     )
     coefficients = quantized * steps
     return inverse_transform(coefficients, (height, width))
+
+
+def decode_candidate(payload: bytes) -> np.ndarray:
+    """Decode either matched transform portfolio using its self-describing packet."""
+    return decode_transform_candidate(payload)
