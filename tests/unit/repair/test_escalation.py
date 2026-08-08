@@ -120,3 +120,16 @@ def test_byte_dominated_repair_stages_are_not_reverified() -> None:
     )
     assert result.status == "fallback"
     assert verifier.calls == 0
+
+
+def test_compact_dc_overlay_precedes_exact_pixel_residual() -> None:
+    generator = np.random.default_rng(19)
+    original = generator.integers(80, 180, (32, 32, 3), dtype=np.uint8)
+    proposal = (original.astype(np.int16) - np.array((10, 20, 30))).astype(np.uint8)
+    result = repair_until_verified(
+        original, proposal, ExactVerifier(), SharedLosslessCodec(), halo_um=0
+    )
+    assert result.status == "verified_repair"
+    assert result.stage == "finer_local_quantization"
+    assert result.payload.startswith(b"R2TO")
+    np.testing.assert_array_equal(apply_repair_packet(proposal, result.payload), original)

@@ -20,6 +20,10 @@ def encode_repair_packet(mask: RepairMask, repaired: np.ndarray) -> bytes:
 
 
 def apply_repair_packet(decoded: np.ndarray, payload: bytes) -> np.ndarray:
+    if payload[:4] == b"R2TO":
+        from denser.repair.transform_overlay import apply_transform_overlay
+
+        return apply_transform_overlay(decoded, payload)
     if len(payload) < HEADER.size:
         raise ValueError("repair packet is truncated")
     magic, mask_length, residual_length, digest = HEADER.unpack_from(payload)
