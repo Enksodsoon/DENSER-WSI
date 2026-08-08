@@ -12,7 +12,7 @@ import time
 
 import numpy as np
 
-from denser.codecs.quadtree import build_jpegxl_quadtree_candidates
+from denser.codecs.quadtree import build_jpeg_quadtree_candidates
 from denser.codecs.registry import build_default_registry
 from denser.codecs.standard import StandardLadder, build_standard_candidates
 from denser.core.canonical import canonical_json_bytes
@@ -282,7 +282,7 @@ def main() -> int:
                     started = time.perf_counter()
                     sensitivity = _sensitivity(rgb)
                     denser_candidates = build_denser_candidates(rgb, sensitivity, profile)
-                    denser_candidates.extend(build_jpegxl_quadtree_candidates(rgb, sensitivity))
+                    denser_candidates.extend(build_jpeg_quadtree_candidates(rgb, sensitivity))
                     denser_build = time.perf_counter() - started
                     denser, denser_select = _measure_selection(
                         rgb,

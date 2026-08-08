@@ -61,6 +61,7 @@ def test_final_encodes_every_level0_tile_once(tmp_path: Path) -> None:
             tmp_path,
             (slide,),
             context,
+            cpu_workers=2,
             standard_builder=lossless_standard,
             quadtree_builder=no_quadtree,
         ),
@@ -74,7 +75,7 @@ def test_final_encodes_every_level0_tile_once(tmp_path: Path) -> None:
     assert {key[0] for key in result.address_method_counts} == {"synthetic-final"}
     assert result.ledgers_match_files
     assert result.random_tiles_independently_decodable
-    assert 1 < maximum_readers <= 3
+    assert maximum_readers == 2
     assert total_reads == len(expected)
 
 

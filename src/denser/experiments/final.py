@@ -10,7 +10,7 @@ import numpy as np
 from denser.codecs.base import EncodedCandidate
 from denser.codecs.lossless import SharedLosslessCodec
 from denser.codecs.registry import CodecRegistry, build_default_registry
-from denser.codecs.quadtree import build_jpegxl_quadtree_candidates
+from denser.codecs.quadtree import build_jpeg_quadtree_candidates
 from denser.codecs.standard import StandardLadder, build_standard_candidates
 from denser.container.mcv2 import McV2Reader, McV2Writer
 from denser.core.errors import PartitionViolation
@@ -47,7 +47,7 @@ class FinalHoldoutConfig:
     cpu_workers: int = 6
     standard_ladder: StandardLadder = StandardLadder()
     standard_builder: Callable[[np.ndarray, StandardLadder], list[EncodedCandidate]] = build_standard_candidates
-    quadtree_builder: Callable[[np.ndarray, np.ndarray], list[EncodedCandidate]] = build_jpegxl_quadtree_candidates
+    quadtree_builder: Callable[[np.ndarray, np.ndarray], list[EncodedCandidate]] = build_jpeg_quadtree_candidates
     codec_registry: CodecRegistry | None = None
     acceptance_contract: AcceptanceContract = AcceptanceContract()
 
@@ -163,7 +163,7 @@ def run_final_holdout(
             return address, encoded_methods
 
         try:
-            tile_workers = max(1, min(3, config.cpu_workers // 2))
+            tile_workers = min(3, config.cpu_workers)
             with ThreadPoolExecutor(max_workers=tile_workers) as pool:
                 for start in range(0, len(addresses), tile_workers):
                     encoded = pool.map(

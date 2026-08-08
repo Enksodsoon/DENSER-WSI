@@ -9,6 +9,7 @@ from typing import Callable, Protocol
 import numpy as np
 
 from denser.codecs.base import EncodedCandidate
+from denser.codecs.jpeg import JpegCodec
 from denser.codecs.jpegxl import JpegXlCodec
 from denser.core.models import ByteBreakdown
 
@@ -17,6 +18,7 @@ MAGIC = b"QAM2"
 HEADER = struct.Struct(">4sHHHHI32s")
 LEAF = struct.Struct(">HHHHBI")
 QUALITY_DISTANCES = (0.5, 1.0, 2.0)
+JPEG_QUALITIES = (90, 80, 70)
 
 
 class LeafCodec(Protocol):
@@ -210,6 +212,107 @@ def build_jpegxl_quadtree_candidates(
     ]
 
 
+def build_jpeg_quadtree_candidate(
+    rgb: np.ndarray,
+    sensitivity: np.ndarray,
+    *,
+    min_leaf: int = 128,
+    allocation_quantiles: tuple[float, float] = (0.5, 0.75),
+    allocation_policy_id: str = "alloc25-25-50",
+    fixed_quality_code: int | None = None,
+    codec_factory: Callable[[int], LeafCodec] = JpegCodec,
+) -> EncodedCandidate:
+    pixels = np.asarray(rgb)
+    values = np.asarray(sensitivity, dtype=np.float64)
+    if (
+        pixels.dtype != np.uint8
+        or pixels.ndim != 3
+        or pixels.shape[2] != 3
+        or values.shape != pixels.shape
+    ):
+        raise ValueError("JPEG quadtree requires matching uint8 RGB and sensitivity")
+    if min_leaf < 8 or min_leaf & (min_leaf - 1):
+        raise ValueError("quadtree minimum leaf must be a power of two of at least eight")
+    lower_quantile, upper_quantile = allocation_quantiles
+    if (
+        not 0 <= lower_quantile < upper_quantile <= 1
+        or not allocation_policy_id
+        or (
+            fixed_quality_code is not None
+            and fixed_quality_code not in range(len(JPEG_QUALITIES))
+        )
+    ):
+        raise ValueError("JPEG quadtree allocation policy is invalid")
+    regions = _regions(values, min_leaf)
+    means = np.asarray([item[4] for item in regions])
+    lower, upper = (
+        np.quantile(means, allocation_quantiles)
+        if len(means) > 1
+        else (means[0], means[0])
+    )
+    codes = (
+        [fixed_quality_code] * len(regions)
+        if fixed_quality_code is not None
+        else [
+            0 if mean >= upper else 1 if mean >= lower else 2
+            for *_region, mean in regions
+        ]
+    )
+
+    def encode_leaf(item):  # type: ignore[no-untyped-def]
+        (x, y, width, height, _mean), code = item
+        return codec_factory(JPEG_QUALITIES[code]).encode(
+            pixels[y : y + height, x : x + width]
+        )
+
+    with ThreadPoolExecutor(max_workers=min(2, len(regions))) as pool:
+        encoded = list(pool.map(encode_leaf, zip(regions, codes, strict=True)))
+    leaves = tuple(
+        QuadtreeLeaf(x, y, width, height, code, len(candidate.payload))
+        for (x, y, width, height, _mean), code, candidate in zip(
+            regions, codes, encoded, strict=True
+        )
+    )
+    allocation = QuadtreeAllocationMap(
+        pixels.shape[1], pixels.shape[0], min_leaf, leaves
+    ).encode()
+    payload = b"".join(item.payload for item in encoded)
+    return EncodedCandidate(
+        "denser-quadtree-jpeg-v2",
+        f"jpeg-evidence-quadtree-min{min_leaf}-q90-80-70-{allocation_policy_id}",
+        payload,
+        ByteBreakdown(payload=len(payload), method_signaling=len(allocation)),
+        allocation_map=allocation,
+    )
+
+
+def build_jpeg_quadtree_candidates(
+    rgb: np.ndarray,
+    sensitivity: np.ndarray,
+    *,
+    min_leaf: int = 128,
+    codec_factory: Callable[[int], LeafCodec] = JpegCodec,
+) -> list[EncodedCandidate]:
+    policies = (
+        ((0.5, 0.75), "alloc25-25-50", None),
+        ((0.25, 0.5), "alloc50-25-25", None),
+        ((0.0, 0.25), "alloc75-25-0", None),
+        ((0.0, 0.25), "all-q90", 0),
+    )
+    return [
+        build_jpeg_quadtree_candidate(
+            rgb,
+            sensitivity,
+            min_leaf=min_leaf,
+            allocation_quantiles=quantiles,
+            allocation_policy_id=policy_id,
+            fixed_quality_code=fixed_quality_code,
+            codec_factory=codec_factory,
+        )
+        for quantiles, policy_id, fixed_quality_code in policies
+    ]
+
+
 def decode_jpegxl_quadtree_candidate(
     payload: bytes,
     allocation_map: bytes,
@@ -227,5 +330,26 @@ def decode_jpegxl_quadtree_candidate(
         decoded[leaf.y : leaf.y + leaf.height, leaf.x : leaf.x + leaf.width] = codec_factory(
             QUALITY_DISTANCES[leaf.quality_code]
         ).decode(child, shape)
+        offset += leaf.payload_length
+    return decoded
+
+
+def decode_jpeg_quadtree_candidate(
+    payload: bytes,
+    allocation_map: bytes,
+    *,
+    codec_factory: Callable[[int], LeafCodec] = JpegCodec,
+) -> np.ndarray:
+    allocation = QuadtreeAllocationMap.decode(allocation_map)
+    if len(payload) != sum(item.payload_length for item in allocation.leaves):
+        raise ValueError("JPEG quadtree payload length does not match allocation map")
+    decoded = np.empty((allocation.height, allocation.width, 3), dtype=np.uint8)
+    offset = 0
+    for leaf in allocation.leaves:
+        child = payload[offset : offset + leaf.payload_length]
+        shape = (leaf.height, leaf.width, 3)
+        decoded[
+            leaf.y : leaf.y + leaf.height, leaf.x : leaf.x + leaf.width
+        ] = codec_factory(JPEG_QUALITIES[leaf.quality_code]).decode(child, shape)
         offset += leaf.payload_length
     return decoded
