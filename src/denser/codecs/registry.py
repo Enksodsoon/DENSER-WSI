@@ -50,6 +50,10 @@ def build_default_registry() -> CodecRegistry:
     from denser.codecs.jpeg2000 import Jpeg2000Codec
     from denser.codecs.jpegxl import JpegXlCodec
     from denser.codecs.lossless import SharedLosslessCodec
+    from denser.codecs.source_segments import (
+        SOURCE_SEGMENT_CODEC_ID,
+        decode_source_segment_candidate,
+    )
     from denser.codecs.quadtree import (
         decode_jpeg_quadtree_candidate,
         decode_jpegxl_quadtree_candidate,
@@ -79,6 +83,12 @@ def build_default_registry() -> CodecRegistry:
         "denser-quadtree-jpeg-v2",
         lambda payload, allocation, shape, profile: decode_jpeg_quadtree_candidate(
             payload, allocation
+        ),
+    )
+    registry.register(
+        SOURCE_SEGMENT_CODEC_ID,
+        lambda payload, allocation, shape, profile: decode_source_segment_candidate(
+            payload, allocation, shape
         ),
     )
     registry.register(

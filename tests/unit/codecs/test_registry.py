@@ -6,6 +6,11 @@ import pytest
 from denser.codecs.base import EncodedCandidate
 from denser.codecs.lossless import SharedLosslessCodec
 from denser.codecs.registry import CodecRegistry, UnknownCodecError, build_default_registry
+from denser.codecs.source_segments import (
+    DECODER_TIFF_JPEG,
+    SourceSegmentAllocationV2,
+    build_source_segment_candidate,
+)
 from denser.core.models import ByteBreakdown
 from denser.method.candidates import CandidateProfile, build_uniform_candidates
 
@@ -42,3 +47,28 @@ def test_default_registry_decodes_fallback_and_transform_candidates() -> None:
     transform = build_uniform_candidates(rgb, CandidateProfile((1.0,)))[0]
     np.testing.assert_array_equal(registry.decode(fallback, rgb.shape), rgb)
     assert registry.decode(transform, rgb.shape).shape == rgb.shape
+
+
+def test_default_registry_dispatches_self_contained_source_segment(monkeypatch) -> None:
+    import hashlib
+    import denser.codecs.source_segments as source_segments
+
+    canvas = np.arange(16 * 16 * 3, dtype=np.uint8).reshape(16, 16, 3)
+    payload = b"self-contained-tiff"
+    metadata = SourceSegmentAllocationV2(
+        DECODER_TIFF_JPEG,
+        7,
+        8,
+        8,
+        16,
+        16,
+        3,
+        4,
+        8,
+        8,
+        hashlib.sha256(payload).digest(),
+    )
+    candidate = build_source_segment_candidate(payload, metadata)
+    monkeypatch.setattr(source_segments, "_decode_canvas", lambda stored, record: canvas)
+    decoded = build_default_registry().decode(candidate, (8, 8, 3))
+    np.testing.assert_array_equal(decoded, canvas[4:12, 3:11])

@@ -9,11 +9,13 @@ description = "Falsification-first research framework for evidence-sensitive WSI
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
+  "imagecodecs==2026.6.26",
   "jsonschema==4.26.0",
   "numpy==2.5.1",
   "openslide-python==1.4.6",
   "Pillow==12.3.0",
   "scipy==1.18.0",
+  "tifffile==2026.7.31",
   "typer==0.27.1",
   "zstandard==0.25.0",
 ]

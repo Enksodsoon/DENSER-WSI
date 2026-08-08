@@ -14,8 +14,10 @@ import numpy as np
 
 from denser.codecs.quadtree import build_jpeg_quadtree_candidates
 from denser.codecs.registry import build_default_registry
+from denser.codecs.source_segments import build_source_segment_candidate_from_svs
 from denser.codecs.standard import StandardLadder, build_standard_candidates
 from denser.core.canonical import canonical_json_bytes
+from denser.core.models import TileAddress
 from denser.data.private_cohort import bind_verified_partition_sources
 from denser.evidence.calibrate import (
     acceptance_contract_from_calibration,
@@ -94,7 +96,7 @@ def _physical_grid(slide: object) -> PhysicalGrid:
 
 def _sample_tiles(
     slide: object, count: int, *, seed: int, slide_ordinal: int
-) -> list[np.ndarray]:
+) -> list[tuple[TileAddress, np.ndarray]]:
     width, height = slide.dimensions  # type: ignore[attr-defined]
     size = 512
     columns = math.ceil(width / size)
@@ -108,10 +110,14 @@ def _sample_tiles(
         x, y = tile_x * size, tile_y * size
         tile_width = min(size, width - x)
         tile_height = min(size, height - y)
+        address = TileAddress(0, x, y, tile_width, tile_height)
         sampled.append(
-            np.asarray(
-                slide.read_region((x, y), 0, (tile_width, tile_height)).convert("RGB"),  # type: ignore[attr-defined]
-                dtype=np.uint8,
+            (
+                address,
+                np.asarray(
+                    slide.read_region((x, y), 0, (tile_width, tile_height)).convert("RGB"),  # type: ignore[attr-defined]
+                    dtype=np.uint8,
+                ),
             )
         )
     return sampled
@@ -207,11 +213,14 @@ def main() -> int:
     calibration = calibration_record_from_dict(calibration_document["calibration"])
     contract = acceptance_contract_from_calibration(calibration)
     output = layout.resolve(
-        "results", "development", "generation-1", "feasibility-measurement.private.json"
+        "results",
+        "development",
+        "generation-1",
+        "feasibility-source-segments.private.json",
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     identity = {
-        "version": "DENSER-private-feasibility-1",
+        "version": "DENSER-private-feasibility-source-segments-1",
         "code_commit": arguments.code_commit,
         "image_digest": arguments.image_digest,
         "calibration_digest": calibration.sha256,
@@ -248,7 +257,7 @@ def main() -> int:
                     seed=arguments.seed,
                     slide_ordinal=slide_index,
                 )
-                for tile_index, rgb in enumerate(tiles):
+                for tile_index, (address, rgb) in enumerate(tiles):
                     if (slide_index, tile_index) in completed:
                         continue
                     total_started = time.perf_counter()
@@ -283,6 +292,9 @@ def main() -> int:
                     sensitivity = _sensitivity(rgb)
                     denser_candidates = build_denser_candidates(rgb, sensitivity, profile)
                     denser_candidates.extend(build_jpeg_quadtree_candidates(rgb, sensitivity))
+                    denser_candidates.append(
+                        build_source_segment_candidate_from_svs(source.path, address)
+                    )
                     denser_build = time.perf_counter() - started
                     denser, denser_select = _measure_selection(
                         rgb,
