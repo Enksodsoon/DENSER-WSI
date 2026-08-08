@@ -95,12 +95,9 @@ def encode_transform_overlay(
                     raise ValueError("overlay coefficient exceeds canonical int16 range")
                 body.extend(struct.pack(">h", quantized))
         else:
-            selected = sorted(
-                sorted(
-                    range(coefficients.size),
-                    key=lambda index: (-abs(float(coefficients[index])), index),
-                )[:coefficients_per_block]
-            )
+            indices = np.arange(coefficients.size)
+            ranked = np.lexsort((indices, -np.abs(coefficients)))
+            selected = np.sort(ranked[:coefficients_per_block]).tolist()
             for index in selected:
                 quantized = int(round(float(coefficients[index]) / quantization_step))
                 if not -32768 <= quantized <= 32767:

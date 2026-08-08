@@ -194,13 +194,24 @@ class PreparedLocalizedAcceptanceVerifier:
             raise ValueError("prepared verifier source does not match bound source")
         if not np.any(changed):
             return previous
+        height, width, _ = original.shape
+        total_cells = (
+            ((height + self.cell_size_px - 1) // self.cell_size_px)
+            * ((width + self.cell_size_px - 1) // self.cell_size_px)
+        )
+        changed_cells = sum(
+            bool(np.any(changed[y : y + self.cell_size_px, x : x + self.cell_size_px]))
+            for y in range(0, height, self.cell_size_px)
+            for x in range(0, width, self.cell_size_px)
+        )
+        if changed_cells >= max(4, (total_cells + 7) // 8):
+            return self.verify(original, candidate)
         candidate_evidence = compute_acceptance_evidence(
             candidate, self.physical_grid, self.contract
         )
         comparison = compare_evidence(self._reference, candidate_evidence, self.contract)
         self.prepare_cells()
         acceptance_groups = tuple(name for name, _values in self._reference.groups)
-        height, width, _ = original.shape
         previous_cells = {
             (failure.x, failure.y, failure.width, failure.height): failure.failed_groups
             for failure in previous.failures
