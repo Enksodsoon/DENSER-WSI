@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Enksodsoon/DENSER-WSI/schemas/matched_container.schema.json",
+  "title": "MC-V1 matched container manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "tile_count", "overview_sha256", "integrity_sha256", "index_entry_size"],
+  "properties": {
+    "format": {"const": "MC-V1"},
+    "tile_count": {"type": "integer", "minimum": 0},
+    "overview_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "integrity_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "index_entry_size": {"type": "integer", "minimum": 1}
+  }
+}
