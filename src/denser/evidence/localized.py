@@ -12,7 +12,11 @@ from denser.evidence.architecture import (
     compute_acceptance_groups,
     compute_acceptance_evidence,
 )
-from denser.evidence.cell_batch import compute_cell_acceptance_groups
+from denser.evidence.cell_batch import (
+    CellAcceptanceBatch,
+    compare_cell_acceptance_batches,
+    compute_cell_acceptance_batch,
+)
 from denser.evidence.types import AcceptanceContract, AcceptanceEvidence, PhysicalGrid
 from denser.repair.mask import RepairFailure
 
@@ -58,6 +62,7 @@ class PreparedLocalizedAcceptanceVerifier:
     _source: np.ndarray
     _source_sha256: str
     _reference: AcceptanceEvidence
+    _cell_batch_reference: CellAcceptanceBatch | None = None
     _cell_references: dict[
         tuple[int, int, int, int, tuple[str, ...]],
         tuple[tuple[str, tuple[float, ...]], ...],
@@ -74,16 +79,16 @@ class PreparedLocalizedAcceptanceVerifier:
             "rare_event_sentinels",
             "visual",
         ):
-            batched = compute_cell_acceptance_groups(
+            batched = compute_cell_acceptance_batch(
                 self._source, self.physical_grid, self.cell_size_px
             )
             if batched is not None:
-                self._cell_references.update(
-                    {
-                        (*bounds, acceptance_groups): values
-                        for bounds, values in batched.items()
-                    }
-                )
+                self._cell_batch_reference = batched
+                for index, bounds in enumerate(batched.bounds):
+                    self._cell_references[(*bounds, acceptance_groups)] = tuple(
+                        (name, tuple(float(value) for value in values[index]))
+                        for name, values in batched.groups
+                    )
         for y in range(0, height, self.cell_size_px):
             for x in range(0, width, self.cell_size_px):
                 cell_height = min(self.cell_size_px, height - y)
@@ -112,8 +117,8 @@ class PreparedLocalizedAcceptanceVerifier:
         comparison = compare_evidence(self._reference, candidate_evidence, self.contract)
         self.prepare_cells()
         acceptance_groups = tuple(name for name, _values in self._reference.groups)
-        candidate_cells = (
-            compute_cell_acceptance_groups(
+        candidate_batch = (
+            compute_cell_acceptance_batch(
                 candidate, self.physical_grid, self.cell_size_px
             )
             if acceptance_groups
@@ -125,6 +130,13 @@ class PreparedLocalizedAcceptanceVerifier:
             )
             else None
         )
+        batched_failures = (
+            compare_cell_acceptance_batches(
+                self._cell_batch_reference, candidate_batch, self.contract
+            )
+            if self._cell_batch_reference is not None and candidate_batch is not None
+            else None
+        )
         height, width, _ = original.shape
         failures: list[RepairFailure] = []
         for y in range(0, height, self.cell_size_px):
@@ -133,18 +145,20 @@ class PreparedLocalizedAcceptanceVerifier:
                 cell_width = min(self.cell_size_px, width - x)
                 key = (x, y, cell_width, cell_height, acceptance_groups)
                 reference = self._cell_references[key]
-                cell = compare_acceptance_groups(
-                    reference,
-                    candidate_cells[(x, y, cell_width, cell_height)]
-                    if candidate_cells is not None
-                    else compute_acceptance_groups(
-                        candidate[y : y + cell_height, x : x + cell_width],
-                        self.physical_grid,
-                        groups=acceptance_groups,
-                    ),
-                    self.contract,
+                failed_groups = (
+                    batched_failures[(x, y, cell_width, cell_height)]
+                    if batched_failures is not None
+                    else compare_acceptance_groups(
+                        reference,
+                        compute_acceptance_groups(
+                            candidate[y : y + cell_height, x : x + cell_width],
+                            self.physical_grid,
+                            groups=acceptance_groups,
+                        ),
+                        self.contract,
+                    ).failed_groups
                 )
-                if cell.failed_groups:
+                if failed_groups:
                     failures.append(
                         RepairFailure(
                             x,
@@ -153,7 +167,7 @@ class PreparedLocalizedAcceptanceVerifier:
                             cell_height,
                             width,
                             height,
-                            cell.failed_groups,
+                            failed_groups,
                         )
                     )
         if not failures and comparison.failed_groups:

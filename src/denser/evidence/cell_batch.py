@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 
 import numpy as np
 from scipy import ndimage
 
 from denser.evidence.stain import hematoxylin_concentration, sentinel_mask
-from denser.evidence.types import PhysicalGrid
+from denser.evidence.types import AcceptanceContract, PhysicalGrid
+
+
+@dataclass(frozen=True, slots=True)
+class CellAcceptanceBatch:
+    bounds: tuple[tuple[int, int, int, int], ...]
+    groups: tuple[tuple[str, np.ndarray], ...]
 
 
 def _cells(values: np.ndarray, size: int) -> np.ndarray:
@@ -69,11 +76,11 @@ def _spatial_means(values: np.ndarray) -> np.ndarray:
     ).reshape(rows * columns, 16)
 
 
-def compute_cell_acceptance_groups(
+def compute_cell_acceptance_batch(
     rgb: np.ndarray,
     grid: PhysicalGrid,
     cell_size: int,
-) -> dict[tuple[int, int, int, int], tuple[tuple[str, tuple[float, ...]], ...]] | None:
+) -> CellAcceptanceBatch | None:
     pixels = np.asarray(rgb)
     if (
         pixels.dtype != np.uint8
@@ -150,10 +157,15 @@ def compute_cell_acceptance_groups(
             / area
         )
     luminance = flat_pixels.astype(np.float64).mean(axis=2)
+    tissue_fraction = (luminance < 240).mean(axis=1)
     channel_mean = normalized.mean(axis=1)
     channel_std = normalized.std(axis=1)
     red_green = normalized[:, :, 0] - normalized[:, :, 1]
     blue_green = normalized[:, :, 2] - normalized[:, :, 1]
+    red_green_abs_mean = np.abs(red_green).mean(axis=1)
+    red_green_std = red_green.std(axis=1)
+    blue_green_abs_mean = np.abs(blue_green).mean(axis=1)
+    blue_green_std = blue_green.std(axis=1)
     centered = normalized - channel_mean[:, None, :]
     covariance = np.einsum("npi,npj->nij", centered, centered) / max(area - 1, 1)
     covariance_std = np.sqrt(
@@ -162,12 +174,19 @@ def compute_cell_acceptance_groups(
     correlation = covariance / (
         covariance_std[:, :, None] * covariance_std[:, None, :]
     )
+    covariance_determinant = np.linalg.det(covariance)
     red_spatial = _spatial_means(np.abs(red_green).reshape(rows, columns, cell_size, cell_size))
     blue_spatial = _spatial_means(
         np.abs(blue_green).reshape(rows, columns, cell_size, cell_size)
     )
 
-    results = {}
+    bounds_rows: list[tuple[int, int, int, int]] = []
+    group_rows: dict[str, list[tuple[float, ...]]] = {
+        "nuclear_objects": [],
+        "architecture": [],
+        "rare_event_sentinels": [],
+        "visual": [],
+    }
     for index in range(cell_count):
         nuclear = [
             value
@@ -224,7 +243,7 @@ def compute_cell_acceptance_groups(
         architecture_values = (
             float(len(enclosed)),
             sum(value[0] for value in enclosed) / area,
-            float((flat_pixels[index].mean(axis=1) < 240).mean()),
+            tissue_fraction[index],
         )
         visual_values = (
             *histograms[0][index],
@@ -238,24 +257,91 @@ def compute_cell_acceptance_groups(
             channel_std[index, 1],
             channel_mean[index, 2],
             channel_std[index, 2],
-            float(np.mean(np.abs(red_green[index]))),
-            float(np.std(red_green[index])),
-            float(np.mean(np.abs(blue_green[index]))),
-            float(np.std(blue_green[index])),
+            red_green_abs_mean[index],
+            red_green_std[index],
+            blue_green_abs_mean[index],
+            blue_green_std[index],
             correlation[index, 0, 1],
             correlation[index, 0, 2],
             correlation[index, 1, 2],
-            float(np.linalg.det(covariance[index])),
+            covariance_determinant[index],
             *np.column_stack((red_spatial[index], blue_spatial[index])).ravel(),
         )
         cell_y, cell_x = divmod(index, columns)
-        results[(cell_x * cell_size, cell_y * cell_size, cell_size, cell_size)] = tuple(
-            (name, tuple(round(float(value), 12) for value in values))
-            for name, values in (
-                ("nuclear_objects", nuclear_values),
-                ("architecture", architecture_values),
-                ("rare_event_sentinels", sentinel_values),
-                ("visual", visual_values),
-            )
+        bounds_rows.append(
+            (cell_x * cell_size, cell_y * cell_size, cell_size, cell_size)
         )
-    return results
+        group_rows["nuclear_objects"].append(nuclear_values)
+        group_rows["architecture"].append(architecture_values)
+        group_rows["rare_event_sentinels"].append(sentinel_values)
+        group_rows["visual"].append(visual_values)
+    return CellAcceptanceBatch(
+        tuple(bounds_rows),
+        tuple(
+            (name, np.round(np.asarray(group_rows[name], dtype=np.float64), 12))
+            for name in (
+                "nuclear_objects",
+                "architecture",
+                "rare_event_sentinels",
+                "visual",
+            )
+        ),
+    )
+
+
+def compute_cell_acceptance_groups(
+    rgb: np.ndarray,
+    grid: PhysicalGrid,
+    cell_size: int,
+) -> dict[tuple[int, int, int, int], tuple[tuple[str, tuple[float, ...]], ...]] | None:
+    batch = compute_cell_acceptance_batch(rgb, grid, cell_size)
+    if batch is None:
+        return None
+    return {
+        bounds: tuple(
+            (name, tuple(float(value) for value in values[index]))
+            for name, values in batch.groups
+        )
+        for index, bounds in enumerate(batch.bounds)
+    }
+
+
+def compare_cell_acceptance_batches(
+    reference: CellAcceptanceBatch,
+    candidate: CellAcceptanceBatch,
+    contract: AcceptanceContract,
+) -> dict[tuple[int, int, int, int], tuple[str, ...]]:
+    if reference.bounds != candidate.bounds:
+        raise ValueError("cell evidence batches have different bounds")
+    reference_groups = dict(reference.groups)
+    candidate_groups = dict(candidate.groups)
+    if reference_groups.keys() != candidate_groups.keys():
+        raise ValueError("cell evidence batches have different groups")
+    calibrated = dict(contract.absolute_group_bounds)
+    tolerances = {
+        "nuclear_objects": contract.nuclear_relative_tolerance,
+        "architecture": contract.architecture_relative_tolerance,
+        "rare_event_sentinels": contract.sentinel_relative_tolerance,
+        "visual": contract.visual_relative_tolerance,
+    }
+    failed: list[list[str]] = [[] for _bounds in reference.bounds]
+    for name, first in reference.groups:
+        second = candidate_groups[name]
+        if first.shape != second.shape:
+            raise ValueError("cell evidence group shapes differ")
+        if calibrated:
+            bounds = np.asarray(calibrated[name], dtype=np.float64)
+            if bounds.shape != first.shape[1:]:
+                raise ValueError("calibrated bound shape does not match evidence group")
+            distance = np.max(np.abs(first - second) / bounds, axis=1)
+            threshold = 1.0
+        else:
+            scale = np.maximum(np.abs(first), 1e-6)
+            distance = np.max(np.abs(first - second) / scale, axis=1)
+            threshold = tolerances[name]
+        for index in np.flatnonzero(distance > threshold):
+            failed[int(index)].append(name)
+    return {
+        bounds: tuple(failed[index])
+        for index, bounds in enumerate(reference.bounds)
+    }

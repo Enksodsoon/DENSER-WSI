@@ -8,7 +8,11 @@ from denser.evidence.architecture import (
     compute_acceptance_groups,
     compute_acceptance_evidence,
 )
-from denser.evidence.cell_batch import compute_cell_acceptance_groups
+from denser.evidence.cell_batch import (
+    compare_cell_acceptance_batches,
+    compute_cell_acceptance_batch,
+    compute_cell_acceptance_groups,
+)
 from denser.evidence.nuclei import nuclear_features
 from denser.evidence.sentinels import sentinel_features
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
@@ -181,3 +185,27 @@ def test_batched_cell_evidence_matches_scalar_reference() -> None:
                 assert actual_values == pytest.approx(
                     expected_values, rel=1e-10, abs=1e-10
                 )
+
+
+def test_batched_cell_comparison_matches_scalar_contract() -> None:
+    source = np.random.default_rng(24).integers(0, 256, (64, 64, 3), dtype=np.uint8)
+    candidate = source.copy()
+    candidate[:32, :32] //= 2
+    grid = PhysicalGrid(0.25, 0.25)
+    contract = AcceptanceContract(0.03, 0.03, 0.01, 0.03)
+    reference_batch = compute_cell_acceptance_batch(source, grid, 16)
+    candidate_batch = compute_cell_acceptance_batch(candidate, grid, 16)
+    assert reference_batch is not None and candidate_batch is not None
+    observed = compare_cell_acceptance_batches(
+        reference_batch, candidate_batch, contract
+    )
+    reference_groups = compute_cell_acceptance_groups(source, grid, 16)
+    candidate_groups = compute_cell_acceptance_groups(candidate, grid, 16)
+    assert reference_groups is not None and candidate_groups is not None
+    for bounds, values in reference_groups.items():
+        from denser.evidence.architecture import compare_acceptance_groups
+
+        expected = compare_acceptance_groups(
+            values, candidate_groups[bounds], contract
+        ).failed_groups
+        assert observed[bounds] == expected
