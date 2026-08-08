@@ -137,3 +137,87 @@ class PreparedLocalizedAcceptanceVerifier:
                 )
             )
         return LocalizedAcceptanceResult(not failures, tuple(failures))
+
+    def verify_changed(
+        self,
+        source: np.ndarray,
+        decoded: np.ndarray,
+        previous: LocalizedAcceptanceResult,
+        changed_pixels: np.ndarray,
+    ) -> LocalizedAcceptanceResult:
+        original = np.asarray(source)
+        candidate = np.asarray(decoded)
+        changed = np.asarray(changed_pixels)
+        if (
+            original.dtype != np.uint8
+            or candidate.dtype != np.uint8
+            or original.shape != candidate.shape
+            or changed.dtype != np.bool_
+            or changed.shape != original.shape[:2]
+        ):
+            raise ValueError("incremental acceptance requires matching pixels and change mask")
+        if original is not self._source and hashlib.sha256(
+            original.tobytes(order="C")
+        ).hexdigest() != self._source_sha256:
+            raise ValueError("prepared verifier source does not match bound source")
+        if not np.any(changed):
+            return previous
+        candidate_evidence = compute_acceptance_evidence(
+            candidate, self.physical_grid, self.contract
+        )
+        comparison = compare_evidence(self._reference, candidate_evidence, self.contract)
+        self.prepare_cells()
+        acceptance_groups = tuple(name for name, _values in self._reference.groups)
+        height, width, _ = original.shape
+        previous_cells = {
+            (failure.x, failure.y, failure.width, failure.height): failure.failed_groups
+            for failure in previous.failures
+            if failure.width <= self.cell_size_px and failure.height <= self.cell_size_px
+        }
+        failures: list[RepairFailure] = []
+        for y in range(0, height, self.cell_size_px):
+            for x in range(0, width, self.cell_size_px):
+                cell_height = min(self.cell_size_px, height - y)
+                cell_width = min(self.cell_size_px, width - x)
+                bounds = (x, y, cell_width, cell_height)
+                if not np.any(changed[y : y + cell_height, x : x + cell_width]):
+                    failed_groups = previous_cells.get(bounds, ())
+                else:
+                    reference = self._cell_references[
+                        (x, y, cell_width, cell_height, acceptance_groups)
+                    ]
+                    cell = compare_acceptance_groups(
+                        reference,
+                        compute_acceptance_groups(
+                            candidate[y : y + cell_height, x : x + cell_width],
+                            self.physical_grid,
+                            groups=acceptance_groups,
+                        ),
+                        self.contract,
+                    )
+                    failed_groups = cell.failed_groups
+                if failed_groups:
+                    failures.append(
+                        RepairFailure(
+                            x,
+                            y,
+                            cell_width,
+                            cell_height,
+                            width,
+                            height,
+                            failed_groups,
+                        )
+                    )
+        if not failures and comparison.failed_groups:
+            failures.append(
+                RepairFailure(
+                    0,
+                    0,
+                    width,
+                    height,
+                    width,
+                    height,
+                    comparison.failed_groups,
+                )
+            )
+        return LocalizedAcceptanceResult(not failures, tuple(failures))

@@ -59,3 +59,20 @@ def test_tile_average_cannot_bypass_cell_level_acceptance(monkeypatch) -> None: 
     result = LocalizedAcceptanceVerifier(AcceptanceContract(), 8).verify(source, decoded)
     assert not result.passed
     assert any(item.x == 0 and item.y == 0 for item in result.failures)
+
+
+def test_incremental_repair_verification_matches_full_reverification() -> None:
+    source = np.random.default_rng(31).integers(0, 256, (64, 64, 3), dtype=np.uint8)
+    proposal = source.copy()
+    proposal[:16, :16] = 255
+    proposal[32:48, 32:48] = 0
+    verifier = LocalizedAcceptanceVerifier(
+        AcceptanceContract(0.01, 0.01, 0.001, 0.01), 16
+    ).prepare(source)
+    initial = verifier.verify(source, proposal)
+    repaired = proposal.copy()
+    repaired[:16, :16] = source[:16, :16]
+    changed = np.any(repaired != proposal, axis=2)
+    assert verifier.verify_changed(source, repaired, initial, changed) == verifier.verify(
+        source, repaired
+    )

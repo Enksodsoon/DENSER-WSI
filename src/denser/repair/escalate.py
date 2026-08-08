@@ -38,6 +38,20 @@ def _failures(result: Any) -> tuple[RepairFailure, ...]:
     return tuple(value for value in values if isinstance(value, RepairFailure))
 
 
+def _verify_changed(
+    verifier: RepairVerifier,
+    source: np.ndarray,
+    proposal: np.ndarray,
+    repaired: np.ndarray,
+    initial: Any,
+) -> Any:
+    incremental = getattr(verifier, "verify_changed", None)
+    if callable(incremental):
+        changed = np.any(np.asarray(repaired) != np.asarray(proposal), axis=2)
+        return incremental(source, repaired, initial, changed)
+    return verifier.verify(source, repaired)
+
+
 def repair_until_verified(
     source: np.ndarray,
     proposal: np.ndarray,
@@ -117,7 +131,7 @@ def repair_until_verified(
         if byte_dominated(len(stored)):
             break
         repaired = apply_transform_overlay(decoded, stored)
-        verification = verifier.verify(original, repaired)
+        verification = _verify_changed(verifier, original, decoded, repaired, initial)
         if bool(getattr(verification, "passed", verification)):
             breakdown = ByteBreakdown(repair=len(stored))
             accepted_overlay = RepairResult(
@@ -138,7 +152,7 @@ def repair_until_verified(
         not byte_dominated(len(stored))
         and (accepted_overlay is None or len(stored) < len(accepted_overlay.payload))
     ):
-        verification = verifier.verify(original, repaired)
+        verification = _verify_changed(verifier, original, decoded, repaired, initial)
     else:
         verification = False
     if bool(getattr(verification, "passed", verification)):
