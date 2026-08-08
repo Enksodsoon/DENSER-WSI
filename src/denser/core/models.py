@@ -72,11 +72,14 @@ class MethodResult:
     profile_id: str
     status: str
     breakdown: ByteBreakdown
+    verification_overhead: int = 0
 
     def __post_init__(self) -> None:
         for name in ("method_id", "profile_id", "status"):
             if not getattr(self, name).strip():
                 raise ValueError(f"{name} must not be empty")
+        if self.verification_overhead < 0:
+            raise ValueError("verification_overhead must be non-negative")
 
     @property
     def complete_bytes(self) -> int:
