@@ -1,0 +1,8 @@
+{
+  "$schema": "../../schemas/reconstruction_provenance.schema.json",
+  "artifact_line_count": 1961,
+  "normalized_sha256": "94c3d8b7833883186a293c904d7ccb6f782113b78cc5750f570ca4d7a90dc0fd",
+  "referenced_source_commit": "ad6e2b6286df4cd39bd7249f66a73dbc7ffae7bc",
+  "source_artifact_available": false,
+  "source_commit_checked_out": false
+}

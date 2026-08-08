@@ -1,0 +1,15 @@
+{
+  "$schema": "../../schemas/run_layout.schema.json",
+  "run_root": "D:\\DENSER-WSI-Run",
+  "directories": [
+    "sources", "secrets", "manifests", "scratch", "containers",
+    "results", "quarantine", "checkpoints"
+  ],
+  "max_slide_concurrency": 1,
+  "max_cpu_workers": 6,
+  "max_codec_processes": 2,
+  "process_memory_gib": 24,
+  "host_memory_reserve_gib": 8,
+  "minimum_disk_reserve_gib": 100,
+  "disk_reserve_fraction": 0.2
+}

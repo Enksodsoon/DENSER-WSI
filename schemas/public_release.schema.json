@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["model", "minimum_aggregate_cell_count", "forbidden_extensions", "forbidden_report_fields", "github_actions_real_data_artifacts"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "model": {"const": "code_and_aggregates"},
+    "minimum_aggregate_cell_count": {"type": "integer", "minimum": 5},
+    "forbidden_extensions": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "forbidden_report_fields": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "github_actions_real_data_artifacts": {"const": false}
+  },
+  "additionalProperties": false
+}

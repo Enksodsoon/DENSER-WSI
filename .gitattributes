@@ -1,0 +1,13 @@
+* text=auto
+*.py text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+
+# Authenticated source uses Markdown hard line breaks; preserve and permit them.
+docs/provenance/*.md whitespace=-blank-at-eol
+docs/audits/*.md whitespace=-blank-at-eol
+docs/superpowers/specs/*.md whitespace=-blank-at-eol
+docs/superpowers/plans/*.md whitespace=-blank-at-eol

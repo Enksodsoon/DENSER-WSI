@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["run_root", "directories", "max_slide_concurrency", "max_cpu_workers", "max_codec_processes", "process_memory_gib", "host_memory_reserve_gib", "minimum_disk_reserve_gib", "disk_reserve_fraction"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "run_root": {"type": "string", "pattern": "^[A-Za-z]:\\\\"},
+    "directories": {"type": "array", "minItems": 8, "items": {"type": "string"}, "uniqueItems": true},
+    "max_slide_concurrency": {"const": 1},
+    "max_cpu_workers": {"type": "integer", "minimum": 1, "maximum": 6},
+    "max_codec_processes": {"type": "integer", "minimum": 1, "maximum": 2},
+    "process_memory_gib": {"type": "integer", "maximum": 24},
+    "host_memory_reserve_gib": {"type": "integer", "minimum": 8},
+    "minimum_disk_reserve_gib": {"type": "integer", "minimum": 100},
+    "disk_reserve_fraction": {"type": "number", "minimum": 0.2, "maximum": 0.2}
+  },
+  "additionalProperties": false
+}

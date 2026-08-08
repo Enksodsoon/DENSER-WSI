@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "denser-wsi"
+version = "0.3.0"
+description = "Falsification-first research framework for evidence-sensitive WSI compression"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+  "jsonschema>=4.23,<5",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.3,<9",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+pythonpath = [".", "src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/denser"]

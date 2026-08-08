@@ -1,0 +1,29 @@
+{
+  "$schema": "../../schemas/study.schema.json",
+  "primary_projects": [
+    "TCGA-BRCA", "TCGA-KIRC", "TCGA-LUAD",
+    "TCGA-COAD", "TCGA-HNSC", "TCGA-LIHC"
+  ],
+  "reserve_projects": ["TCGA-LUSC", "TCGA-KIRP", "TCGA-CESC", "TCGA-PAAD"],
+  "target_counts": {"development": 12, "pilot": 12, "tuning": 12, "final": 30},
+  "reduced_counts": {"development": 6, "pilot": 6, "tuning": 6, "final": 18},
+  "minimum_evaluable_final_slides": 18,
+  "partition_unit": "case_group_sha256",
+  "primary_mpp_um": [0.2, 0.3],
+  "robustness_mpp_um": [0.45, 0.55],
+  "evidence_cell_um": 8.0,
+  "repair_halo_um": 2.0,
+  "automatic_freeze": true,
+  "final_full_grid": true,
+  "sampled_tile_extrapolation": false,
+  "standard_uses_shared_he_v1": true,
+  "standard_uses_shared_lossless_fallback": true,
+  "minimum_standard_codec_families": 2,
+  "primary_certificate_mode": "self_verifying",
+  "claims": {
+    "clinical_noninferiority": false,
+    "universal_preservation": false,
+    "patentability": false,
+    "world_first": false
+  }
+}

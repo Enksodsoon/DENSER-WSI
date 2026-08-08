@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["continue_after_threshold_miss", "manual_phase_unlocks", "phases"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "continue_after_threshold_miss": {"const": true},
+    "manual_phase_unlocks": {"const": false},
+    "phases": {"type": "array", "minItems": 21, "items": {"type": "string"}, "uniqueItems": true}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "../../schemas/public_release.schema.json",
+  "model": "code_and_aggregates",
+  "minimum_aggregate_cell_count": 5,
+  "forbidden_extensions": [
+    ".svs", ".vsi", ".ndpi", ".mrxs", ".scn", ".bif", ".czi",
+    ".mcv1", ".parquet", ".tif", ".tiff"
+  ],
+  "forbidden_report_fields": [
+    "case_id", "file_id", "research_id", "tile_x", "tile_y",
+    "source_sha256", "signed_url", "absolute_path"
+  ],
+  "github_actions_real_data_artifacts": false
+}

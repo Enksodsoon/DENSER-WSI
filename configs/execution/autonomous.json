@@ -1,0 +1,28 @@
+{
+  "$schema": "../../schemas/autonomous_execution.schema.json",
+  "continue_after_threshold_miss": true,
+  "manual_phase_unlocks": false,
+  "phases": [
+    "foundation",
+    "governance",
+    "toolchain",
+    "dataset_resolution",
+    "wsi_io",
+    "mcv1",
+    "standard_codecs",
+    "he_v1",
+    "denser",
+    "repair_certificates",
+    "orchestration",
+    "synthetic",
+    "development",
+    "pilot",
+    "tuning",
+    "freeze",
+    "final_holdout",
+    "robustness",
+    "statistics",
+    "adapter",
+    "final_report"
+  ]
+}

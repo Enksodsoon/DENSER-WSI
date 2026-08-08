@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["artifact_line_count", "normalized_sha256", "referenced_source_commit", "source_artifact_available", "source_commit_checked_out"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "artifact_line_count": {"const": 1961},
+    "normalized_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "referenced_source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "source_artifact_available": {"type": "boolean"},
+    "source_commit_checked_out": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}
