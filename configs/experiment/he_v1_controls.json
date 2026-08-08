@@ -1,0 +1,22 @@
+{
+  "$schema": "../../schemas/he_v1_controls.schema.json",
+  "version": "HE-V1-calibration-2",
+  "alpha": 0.05,
+  "tile_size_px": 512,
+  "spatial_summary_grid": [4, 4],
+  "benign_controls": [
+    {"name": "exposure_plus_1", "digital_levels": 1},
+    {"name": "channel_drift_1", "digital_levels": 1},
+    {"name": "sensor_noise_1", "digital_levels": 1}
+  ],
+  "harmful_controls": [
+    {"name": "nuclear_edge_blur", "expected_group": "nuclear_objects", "radius_um": 2.0},
+    {"name": "chromatin_removal", "expected_group": "nuclear_objects", "hematoxylin_threshold": 0.55},
+    {"name": "small_object_deletion", "expected_group": "rare_event_sentinels", "maximum_area_um2": 4.0},
+    {"name": "boundary_shift", "expected_group": "nuclear_objects", "outward_displacement_um": 1.0},
+    {"name": "local_color_collapse", "expected_group": "visual", "retained_margin_fraction": 0.03125}
+  ],
+  "challenge_selection": "one mechanism per first five development projects; highest source-only applicability; tile-disjoint from benign fit",
+  "standardization": "median center with max of MAD scale, observed benign envelope, and 1e-6",
+  "threshold_basis": "tile_familywise_max"
+}

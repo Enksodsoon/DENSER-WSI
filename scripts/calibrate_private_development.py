@@ -14,7 +14,10 @@ from denser.evidence.calibrate import (
     verify_calibration,
 )
 from denser.evidence.controls import CalibrationProfile
-from denser.evidence.controls_v1 import BENIGN_CONTROLS, HARMFUL_CONTROLS, build_control_pair
+from denser.evidence.controls_v1 import (
+    build_balanced_control_cohort,
+    verify_control_configuration,
+)
 from denser.evidence.types import PhysicalGrid
 from denser.governance.run_layout import RunLayout
 
@@ -65,45 +68,30 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=20260808)
     arguments = parser.parse_args()
     layout = RunLayout(arguments.repo_root, arguments.run_root)
+    control_path = arguments.repo_root / "configs" / "experiment" / "he_v1_controls.json"
+    control_document = json.loads(control_path.read_text(encoding="utf-8"))
+    verify_control_configuration(control_document)
     slides = sorted(layout.resolve("sources", "development").glob("*.svs"))
     if len(slides) < 6:
         raise RuntimeError("all six development slides must be verified before calibration")
-    sampled: list[tuple[np.ndarray, str, PhysicalGrid]] = []
+    sampled_slides: list[list[tuple[np.ndarray, str, PhysicalGrid]]] = []
     for slide_index, slide_path in enumerate(slides):
-        for tile_index, (rgb, grid) in enumerate(
-            _sample_tiles(slide_path, arguments.tiles_per_slide, arguments.search_grid)
-        ):
-            sampled.append((rgb, f"slide-{slide_index:02d}-tile-{tile_index:02d}", grid))
-    challenge_count = len(HARMFUL_CONTROLS)
-    if len(sampled) < challenge_count + 2:
-        raise RuntimeError("development tile sample is too small for disjoint controls")
-    fit_rows = sampled[:-challenge_count]
-    challenge_rows = sampled[-challenge_count:]
-    benign = [
-        build_control_pair(
-            rgb,
-            tile_id=tile_id,
-            control_name=BENIGN_CONTROLS[index % len(BENIGN_CONTROLS)],
-            grid=grid,
-            seed=arguments.seed + index,
+        sampled_slides.append(
+            [
+                (rgb, f"slide-{slide_index:02d}-tile-{tile_index:02d}", grid)
+                for tile_index, (rgb, grid) in enumerate(
+                    _sample_tiles(slide_path, arguments.tiles_per_slide, arguments.search_grid)
+                )
+            ]
         )
-        for index, (rgb, tile_id, grid) in enumerate(fit_rows)
-    ]
-    harmful = [
-        build_control_pair(
-            rgb,
-            tile_id=tile_id,
-            control_name=control_name,
-            grid=grid,
-            seed=arguments.seed + len(fit_rows) + index,
-        )
-        for index, ((rgb, tile_id, grid), control_name) in enumerate(
-            zip(challenge_rows, HARMFUL_CONTROLS, strict=True)
-        )
-    ]
-    profile = CalibrationProfile(0.05, tuple(pair.control_id for pair in harmful))
-    calibration = calibrate_contract(benign, profile)
-    audit = verify_calibration(calibration, harmful)
+    benign, harmful = build_balanced_control_cohort(
+        sampled_slides, seed=arguments.seed
+    )
+    profile = CalibrationProfile(
+        float(control_document["alpha"]), tuple(pair.control_id for pair in harmful)
+    )
+    calibration = calibrate_contract(list(benign), profile)
+    audit = verify_calibration(calibration, list(harmful))
     document: dict[str, object] = {
         "version": "DENSER-private-development-calibration-1",
         "slide_count": len(slides),

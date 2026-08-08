@@ -2,6 +2,13 @@ from __future__ import annotations
 
 import numpy as np
 
+from denser.evidence.stain import (
+    boundary_spectrum,
+    chromatin_frequency,
+    hematoxylin_concentration,
+)
+from denser.evidence.types import PhysicalGrid
+
 
 def connected_components(mask: np.ndarray) -> tuple[tuple[tuple[int, int], ...], ...]:
     binary = np.asarray(mask, dtype=bool)
@@ -66,20 +73,42 @@ def connected_components(mask: np.ndarray) -> tuple[tuple[tuple[int, int], ...],
     return tuple(components)
 
 
-def nuclear_features(rgb: np.ndarray) -> tuple[float, ...]:
+def nuclear_features(
+    rgb: np.ndarray, grid: PhysicalGrid | None = None
+) -> tuple[float, ...]:
     pixels = np.asarray(rgb, dtype=np.uint8)
-    intensity = pixels.astype(np.float64).mean(axis=2)
-    objects = [component for component in connected_components(intensity < 140) if len(component) >= 20]
+    selected_grid = grid or PhysicalGrid(0.25, 0.25)
+    pixel_area_um2 = selected_grid.mpp_x * selected_grid.mpp_y
+    minimum_pixels = max(1, int(np.ceil(0.25 / pixel_area_um2)))
+    maximum_pixels = max(minimum_pixels, int(np.floor(128.0 / pixel_area_um2)))
+    hematoxylin = hematoxylin_concentration(pixels)
+    objects = [
+        component
+        for component in connected_components(hematoxylin > 0.55)
+        if minimum_pixels <= len(component) <= maximum_pixels
+    ]
     area = sum(len(component) for component in objects)
     if objects:
         centroid_y = sum(sum(y for y, _x in component) / len(component) for component in objects) / len(objects)
         centroid_x = sum(sum(x for _y, x in component) / len(component) for component in objects) / len(objects)
     else:
         centroid_y = centroid_x = 0.0
-    height, width = intensity.shape
+    height, width = hematoxylin.shape
+    spatial = tuple(
+        float(block.mean()) if block.size else 0.0
+        for y_indices in np.array_split(np.arange(height), 4)
+        for x_indices in np.array_split(np.arange(width), 4)
+        for block in (hematoxylin[np.ix_(y_indices, x_indices)],)
+    )
     return (
-        float(len(objects)),
+        float(len(objects)) * 1_000_000.0 / (height * width * pixel_area_um2),
         area / (height * width),
         centroid_y / max(height - 1, 1),
         centroid_x / max(width - 1, 1),
+        float(hematoxylin.mean()),
+        float(np.quantile(hematoxylin, 0.95)),
+        float(np.quantile(hematoxylin, 0.99)),
+        *boundary_spectrum(hematoxylin, selected_grid),
+        *chromatin_frequency(hematoxylin, selected_grid),
+        *spatial,
     )

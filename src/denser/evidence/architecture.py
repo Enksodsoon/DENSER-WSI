@@ -16,14 +16,20 @@ from denser.evidence.types import (
 from denser.evidence.visual import visual_features
 
 
-def architecture_features(rgb: np.ndarray) -> tuple[float, ...]:
+def architecture_features(
+    rgb: np.ndarray, physical_grid: PhysicalGrid | None = None
+) -> tuple[float, ...]:
     pixels = np.asarray(rgb, dtype=np.uint8)
+    grid = physical_grid or PhysicalGrid(0.25, 0.25)
+    minimum_lumen_pixels = max(
+        1, int(np.ceil(0.25 / (grid.mpp_x * grid.mpp_y)))
+    )
     bright = np.all(pixels > 245, axis=2)
     height, width = bright.shape
     enclosed = []
     for component in connected_components(bright):
         touches_border = any(y in (0, height - 1) or x in (0, width - 1) for y, x in component)
-        if not touches_border and len(component) >= 4:
+        if not touches_border and len(component) >= minimum_lumen_pixels:
             enclosed.append(component)
     lumen_area = sum(len(component) for component in enclosed)
     tissue_fraction = float((pixels.astype(np.float64).mean(axis=2) < 240).mean())
@@ -34,9 +40,9 @@ def compute_acceptance_evidence(
     rgb: np.ndarray, physical_grid: PhysicalGrid, contract: AcceptanceContract
 ) -> AcceptanceEvidence:
     groups = (
-        ("nuclear_objects", nuclear_features(rgb)),
-        ("architecture", architecture_features(rgb)),
-        ("rare_event_sentinels", sentinel_features(rgb)),
+        ("nuclear_objects", nuclear_features(rgb, physical_grid)),
+        ("architecture", architecture_features(rgb, physical_grid)),
+        ("rare_event_sentinels", sentinel_features(rgb, physical_grid)),
         ("visual", visual_features(rgb)),
     )
     rounded = tuple(

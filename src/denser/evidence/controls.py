@@ -24,7 +24,7 @@ class ControlPair:
 class CalibrationProfile:
     alpha: float
     challenge_control_ids: tuple[str, ...]
-    version: str = "HE-V1-calibration-1"
+    version: str = "HE-V1-calibration-2"
 
     def __post_init__(self) -> None:
         if not 0 < self.alpha < 0.5:

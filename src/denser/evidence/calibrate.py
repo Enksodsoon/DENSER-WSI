@@ -43,7 +43,10 @@ def calibrate_contract(
         if matrix.ndim != 2 or matrix.shape[0] != len(development_pairs):
             raise ValueError("every benign tile must report every calibrated group")
         centers = np.median(matrix, axis=0)
-        scales = np.maximum(np.median(np.abs(matrix - centers), axis=0) * 1.4826, 1e-6)
+        deviations = np.abs(matrix - centers)
+        robust_scales = np.median(deviations, axis=0) * 1.4826
+        benign_envelope = np.max(deviations, axis=0)
+        scales = np.maximum(np.maximum(robust_scales, benign_envelope), 1e-6)
         tile_maxima = np.max(np.abs(matrix - centers) / scales, axis=1)
         threshold = _finite_quantile(tile_maxima.tolist(), 1 - profile.alpha)
         standardization.append(

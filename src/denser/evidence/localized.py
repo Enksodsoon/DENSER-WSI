@@ -7,7 +7,6 @@ from dataclasses import field
 import numpy as np
 
 from denser.evidence.architecture import (
-    compare_acceptance,
     compare_evidence,
     compute_acceptance_evidence,
 )

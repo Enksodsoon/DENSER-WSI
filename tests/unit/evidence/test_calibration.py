@@ -32,6 +32,21 @@ def test_calibration_uses_tile_level_max_statistic() -> None:
     assert all(value > 0 for _group, value in record.thresholds)
 
 
+def test_sparse_benign_feature_does_not_explode_familywise_threshold() -> None:
+    pairs = [
+        ControlPair(
+            f"sparse-{index}",
+            f"tile-{index}",
+            "benign",
+            None,
+            (("nuclear_objects", (0.01 if index == 5 else 0.0, 0.0)),),
+        )
+        for index in range(6)
+    ]
+    record = calibrate_contract(pairs, CalibrationProfile(0.10, ()))
+    assert dict(record.thresholds)["nuclear_objects"] <= 1.0
+
+
 def test_challenge_controls_are_not_used_to_fit_thresholds() -> None:
     record = calibrate_contract(_benign_pairs(), _profile())
     assert set(record.fit_control_ids).isdisjoint(record.challenge_control_ids)

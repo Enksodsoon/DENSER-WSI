@@ -37,6 +37,7 @@ SCHEMA_BINDINGS = {
     "configs/execution/run_layout.json": "schemas/run_layout.schema.json",
     "configs/execution/autonomous.json": "schemas/autonomous_execution.schema.json",
     "configs/experiment/study.json": "schemas/study.schema.json",
+    "configs/experiment/he_v1_controls.json": "schemas/he_v1_controls.schema.json",
 }
 
 

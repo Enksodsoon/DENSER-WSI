@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from denser.evidence.controls_v1 import (
     BENIGN_CONTROLS,
     HARMFUL_CONTROLS,
     build_control_cohort,
+    build_balanced_control_cohort,
     build_control_pair,
     transform_control,
+    verify_control_configuration,
 )
+from denser.evidence.calibrate import calibrate_contract, verify_calibration
+from denser.evidence.controls import CalibrationProfile
 from denser.evidence.types import PhysicalGrid
 
 
@@ -78,3 +83,51 @@ def test_control_cohort_keeps_fit_and_challenge_tiles_disjoint() -> None:
     assert {pair.tile_id for pair in benign}.isdisjoint(
         pair.tile_id for pair in harmful
     )
+
+
+def test_he_v1_calibration_retains_all_predeclared_harmful_controls() -> None:
+    base = _histology_tile()
+    tiles = [
+        (np.roll(base, shift=(index % 3, index % 5), axis=(0, 1)), f"tile-{index}")
+        for index in range(35)
+    ]
+    benign, harmful = build_control_cohort(
+        tiles, PhysicalGrid(0.25, 0.25), seed=27
+    )
+    profile = CalibrationProfile(0.05, tuple(pair.control_id for pair in harmful))
+    record = calibrate_contract(list(benign), profile)
+    audit = verify_calibration(record, list(harmful))
+    assert audit.status == "calibrated"
+    assert audit.missed_control_ids == ()
+
+
+def test_balanced_controls_use_distinct_slides_and_disjoint_fit_tiles() -> None:
+    base = _histology_tile()
+    slides = [
+        [
+            (
+                np.roll(base, shift=(slide, tile), axis=(0, 1)),
+                f"slide-{slide}-tile-{tile}",
+                PhysicalGrid(0.25, 0.25),
+            )
+            for tile in range(4)
+        ]
+        for slide in range(6)
+    ]
+    benign, harmful = build_balanced_control_cohort(slides, seed=41)
+    assert len(harmful) == len(HARMFUL_CONTROLS)
+    assert len({pair.tile_id.split("-tile-")[0] for pair in harmful}) == len(harmful)
+    assert {pair.tile_id for pair in benign}.isdisjoint(pair.tile_id for pair in harmful)
+
+
+def test_frozen_control_configuration_rejects_parameter_drift() -> None:
+    import json
+    from pathlib import Path
+
+    document = json.loads(
+        Path("configs/experiment/he_v1_controls.json").read_text(encoding="utf-8")
+    )
+    verify_control_configuration(document)
+    document["harmful_controls"][0]["radius_um"] = 3.0
+    with pytest.raises(ValueError, match="harmful controls"):
+        verify_control_configuration(document)

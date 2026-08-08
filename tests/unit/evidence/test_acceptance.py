@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 
 from denser.evidence.architecture import compare_acceptance
+from denser.evidence.nuclei import nuclear_features
+from denser.evidence.sentinels import sentinel_features
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
 
 
@@ -53,3 +55,18 @@ def test_identical_image_passes_all_acceptance_groups() -> None:
         source, source.copy(), PhysicalGrid(0.25, 0.25), AcceptanceContract()
     )
     assert result.failed_groups == ()
+
+
+def test_object_and_sentinel_evidence_use_physical_area_not_pixel_area() -> None:
+    fine = np.full((40, 40, 3), (215, 145, 185), dtype=np.uint8)
+    coarse = np.full((20, 20, 3), (215, 145, 185), dtype=np.uint8)
+    fine[16:24, 16:24] = (35, 20, 45)
+    coarse[8:12, 8:12] = (35, 20, 45)
+    fine_grid = PhysicalGrid(0.25, 0.25)
+    coarse_grid = PhysicalGrid(0.50, 0.50)
+    fine_nuclear = nuclear_features(fine, fine_grid)
+    coarse_nuclear = nuclear_features(coarse, coarse_grid)
+    fine_sentinel = sentinel_features(fine, fine_grid)
+    coarse_sentinel = sentinel_features(coarse, coarse_grid)
+    assert fine_nuclear[:2] == pytest.approx(coarse_nuclear[:2])
+    assert fine_sentinel[:2] == pytest.approx(coarse_sentinel[:2])
