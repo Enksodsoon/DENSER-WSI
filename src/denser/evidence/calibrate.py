@@ -32,22 +32,43 @@ def calibrate_contract(
         raise ValueError("only benign controls may fit calibration thresholds")
     if len({pair.tile_id for pair in development_pairs}) != len(development_pairs):
         raise ValueError("calibration requires unique tile-level records")
-    grouped: dict[str, list[tuple[float, ...]]] = {}
+    cell_calibration = any(pair.cell_group_deltas for pair in development_pairs)
+    if cell_calibration and any(not pair.cell_group_deltas for pair in development_pairs):
+        raise ValueError("cell-level calibration records cannot be mixed with tile-only records")
+    grouped: dict[str, list[np.ndarray]] = {}
     for pair in development_pairs:
-        for group, values in pair.group_deltas:
-            grouped.setdefault(group, []).append(values)
+        values_by_group = (
+            pair.cell_group_deltas if cell_calibration else pair.group_deltas
+        )
+        for group, values in values_by_group:
+            matrix = np.asarray(values, dtype=np.float64)
+            if not cell_calibration:
+                matrix = matrix.reshape(1, -1)
+            if matrix.ndim != 2 or not matrix.size:
+                raise ValueError("calibration group values must be a non-empty matrix")
+            grouped.setdefault(group, []).append(matrix)
     standardization = []
     thresholds = []
     for group in sorted(grouped):
-        matrix = np.asarray(grouped[group], dtype=np.float64)
-        if matrix.ndim != 2 or matrix.shape[0] != len(development_pairs):
+        tile_matrices = grouped[group]
+        if len(tile_matrices) != len(development_pairs):
             raise ValueError("every benign tile must report every calibrated group")
+        feature_counts = {matrix.shape[1] for matrix in tile_matrices}
+        if len(feature_counts) != 1:
+            raise ValueError("calibrated group feature counts must match")
+        matrix = np.concatenate(tile_matrices, axis=0)
         centers = np.median(matrix, axis=0)
         deviations = np.abs(matrix - centers)
         robust_scales = np.median(deviations, axis=0) * 1.4826
         benign_envelope = np.max(deviations, axis=0)
         scales = np.maximum(np.maximum(robust_scales, benign_envelope), 1e-6)
-        tile_maxima = np.max(np.abs(matrix - centers) / scales, axis=1)
+        tile_maxima = np.asarray(
+            [
+                np.max(np.abs(tile_matrix - centers) / scales)
+                for tile_matrix in tile_matrices
+            ],
+            dtype=np.float64,
+        )
         threshold = _finite_quantile(tile_maxima.tolist(), 1 - profile.alpha)
         standardization.append(
             GroupStandardization(
@@ -95,16 +116,20 @@ def verify_calibration(
             missed.append(control_id)
             scores.append((control_id, 0.0))
             continue
-        group_values = dict(pair.group_deltas).get(pair.expected_group)
+        group_values = dict(
+            pair.cell_group_deltas or pair.group_deltas
+        ).get(pair.expected_group)
         standard = standardization.get(pair.expected_group)
         if group_values is None or standard is None:
             missed.append(control_id)
             scores.append((control_id, 0.0))
             continue
         values = np.asarray(group_values, dtype=np.float64)
+        if values.ndim == 1:
+            values = values.reshape(1, -1)
         centers = np.asarray(standard.centers, dtype=np.float64)
         scales = np.asarray(standard.scales, dtype=np.float64)
-        if values.shape != centers.shape:
+        if values.ndim != 2 or values.shape[1:] != centers.shape:
             missed.append(control_id)
             scores.append((control_id, 0.0))
             continue

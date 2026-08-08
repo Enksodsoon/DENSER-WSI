@@ -7,7 +7,9 @@ from dataclasses import field
 import numpy as np
 
 from denser.evidence.architecture import (
+    compare_acceptance_groups,
     compare_evidence,
+    compute_acceptance_groups,
     compute_acceptance_evidence,
 )
 from denser.evidence.types import AcceptanceContract, AcceptanceEvidence, PhysicalGrid
@@ -56,7 +58,8 @@ class PreparedLocalizedAcceptanceVerifier:
     _source_sha256: str
     _reference: AcceptanceEvidence
     _cell_references: dict[
-        tuple[int, int, int, int, tuple[str, ...]], AcceptanceEvidence
+        tuple[int, int, int, int, tuple[str, ...]],
+        tuple[tuple[str, tuple[float, ...]], ...],
     ] = field(
         default_factory=dict
     )
@@ -74,37 +77,33 @@ class PreparedLocalizedAcceptanceVerifier:
             candidate, self.physical_grid, self.contract
         )
         comparison = compare_evidence(self._reference, candidate_evidence, self.contract)
-        if not comparison.failed_groups:
-            return LocalizedAcceptanceResult(True, ())
-        failed_groups = comparison.failed_groups
+        acceptance_groups = tuple(name for name, _values in self._reference.groups)
         height, width, _ = original.shape
         failures: list[RepairFailure] = []
         for y in range(0, height, self.cell_size_px):
             for x in range(0, width, self.cell_size_px):
                 cell_height = min(self.cell_size_px, height - y)
                 cell_width = min(self.cell_size_px, width - x)
-                key = (x, y, cell_width, cell_height, failed_groups)
+                key = (x, y, cell_width, cell_height, acceptance_groups)
                 reference = self._cell_references.get(key)
                 if reference is None:
-                    reference = compute_acceptance_evidence(
+                    reference = compute_acceptance_groups(
                         original[y : y + cell_height, x : x + cell_width],
                         self.physical_grid,
-                        self.contract,
-                        groups=failed_groups,
+                        groups=acceptance_groups,
                     )
                     self._cell_references[key] = reference
-                cell = compare_evidence(
+                cell = compare_acceptance_groups(
                     reference,
-                    compute_acceptance_evidence(
+                    compute_acceptance_groups(
                         candidate[y : y + cell_height, x : x + cell_width],
                         self.physical_grid,
-                        self.contract,
-                        groups=failed_groups,
+                        groups=acceptance_groups,
                     ),
                     self.contract,
                 )
                 if cell.failed_groups:
                     failures.append(RepairFailure(x, y, cell_width, cell_height, width, height))
-        if not failures:
+        if not failures and comparison.failed_groups:
             failures.append(RepairFailure(0, 0, width, height, width, height))
-        return LocalizedAcceptanceResult(False, tuple(failures))
+        return LocalizedAcceptanceResult(not failures, tuple(failures))

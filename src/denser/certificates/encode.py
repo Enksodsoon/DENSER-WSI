@@ -19,7 +19,7 @@ from denser.evidence.types import AcceptanceContract, PhysicalGrid
 from denser.method.candidates import decode_candidate
 
 
-_IMPLEMENTATION_ID = b"denser-he-v1-certificate-implementation-2-boundary-chromatin"
+_IMPLEMENTATION_ID = b"denser-he-v1-certificate-implementation-3-cell-familywise"
 
 
 def _contract_document(contract: AcceptanceContract) -> dict[str, object]:

@@ -74,14 +74,23 @@ def connected_components(mask: np.ndarray) -> tuple[tuple[tuple[int, int], ...],
 
 
 def nuclear_features(
-    rgb: np.ndarray, grid: PhysicalGrid | None = None
+    rgb: np.ndarray,
+    grid: PhysicalGrid | None = None,
+    *,
+    hematoxylin: np.ndarray | None = None,
 ) -> tuple[float, ...]:
     pixels = np.asarray(rgb, dtype=np.uint8)
     selected_grid = grid or PhysicalGrid(0.25, 0.25)
     pixel_area_um2 = selected_grid.mpp_x * selected_grid.mpp_y
     minimum_pixels = max(1, int(np.ceil(0.25 / pixel_area_um2)))
     maximum_pixels = max(minimum_pixels, int(np.floor(128.0 / pixel_area_um2)))
-    hematoxylin = hematoxylin_concentration(pixels)
+    hematoxylin = (
+        hematoxylin_concentration(pixels)
+        if hematoxylin is None
+        else np.asarray(hematoxylin, dtype=np.float64)
+    )
+    if hematoxylin.shape != pixels.shape[:2]:
+        raise ValueError("nuclear hematoxylin field does not match RGB pixels")
     objects = [
         component
         for component in connected_components(hematoxylin > 0.55)

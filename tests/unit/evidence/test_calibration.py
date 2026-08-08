@@ -32,6 +32,24 @@ def test_calibration_uses_tile_level_max_statistic() -> None:
     assert all(value > 0 for _group, value in record.thresholds)
 
 
+def test_cell_calibration_standardizes_cells_but_thresholds_tile_maxima() -> None:
+    pairs = [
+        ControlPair(
+            f"cell-{index}",
+            f"tile-{index}",
+            "benign",
+            None,
+            (("visual", (0.0,)),),
+            (("visual", ((0.0,), (float(index),))),),
+        )
+        for index in range(1, 7)
+    ]
+    record = calibrate_contract(pairs, CalibrationProfile(0.10, ()))
+    standard = record.standardization[0]
+    assert standard.centers == (0.5,)
+    assert dict(record.thresholds)["visual"] > 0
+
+
 def test_sparse_benign_feature_does_not_explode_familywise_threshold() -> None:
     pairs = [
         ControlPair(

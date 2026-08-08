@@ -4,7 +4,7 @@
   "required": ["$schema", "version", "alpha", "tile_size_px", "spatial_summary_grid", "benign_controls", "harmful_controls", "challenge_selection", "standardization", "threshold_basis"],
   "properties": {
     "$schema": {"type": "string"},
-    "version": {"const": "HE-V1-calibration-2"},
+    "version": {"const": "HE-V1-calibration-3"},
     "alpha": {"const": 0.05},
     "tile_size_px": {"const": 512},
     "spatial_summary_grid": {"const": [4, 4]},

@@ -9,7 +9,7 @@
     "fit_control_ids", "challenge_control_ids", "sha256"
   ],
   "properties": {
-    "version": {"const": "HE-V1-calibration-2"},
+    "version": {"const": "HE-V1-calibration-3"},
     "threshold_basis": {"const": "tile_familywise_max"},
     "alpha": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 0.5},
     "standardization": {"type": "array", "minItems": 1},

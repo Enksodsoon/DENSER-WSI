@@ -5,7 +5,10 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 from PIL import Image, ImageFilter
 
-from denser.evidence.architecture import compute_acceptance_evidence
+from denser.evidence.architecture import (
+    compute_acceptance_evidence,
+    compute_acceptance_groups,
+)
 from denser.evidence.controls import ControlPair
 from denser.evidence.nuclei import connected_components, nuclear_features
 from denser.evidence.sentinels import sentinel_features
@@ -44,7 +47,7 @@ _FROZEN_HARMFUL_ROWS = (
 def verify_control_configuration(document: Mapping[str, object]) -> None:
     """Bind real calibration to the reviewed HE-V1 control specification."""
     expected_scalars = {
-        "version": "HE-V1-calibration-2",
+        "version": "HE-V1-calibration-3",
         "alpha": 0.05,
         "tile_size_px": 512,
         "spatial_summary_grid": [4, 4],
@@ -186,6 +189,32 @@ def build_control_pair(
         )
         for name, values in reference.items()
     )
+    cell_size = max(1, round(8.0 / grid.mean_mpp))
+    cell_values: dict[str, list[tuple[float, ...]]] = {
+        name: [] for name in reference
+    }
+    height, width, _channels = source.shape
+    for y in range(0, height, cell_size):
+        for x in range(0, width, cell_size):
+            reference_cell = dict(
+                compute_acceptance_groups(
+                    source[y : y + cell_size, x : x + cell_size], grid
+                )
+            )
+            candidate_cell = dict(
+                compute_acceptance_groups(
+                    altered[y : y + cell_size, x : x + cell_size], grid
+                )
+            )
+            for name in reference:
+                cell_values[name].append(
+                    tuple(
+                        round(abs(float(left) - float(right)), 12)
+                        for left, right in zip(
+                            reference_cell[name], candidate_cell[name], strict=True
+                        )
+                    )
+                )
     kind = "benign" if control_name in BENIGN_CONTROLS else "harmful"
     expected_group = HARMFUL_CONTROLS.get(control_name)
     return ControlPair(
@@ -194,6 +223,7 @@ def build_control_pair(
         kind,
         expected_group,
         deltas,
+        tuple((name, tuple(cell_values[name])) for name in reference),
     )
 
 

@@ -68,8 +68,16 @@ def chromatin_frequency(
     return (float(laplacian.mean()), float(np.quantile(laplacian, 0.95)))
 
 
-def sentinel_mask(rgb: np.ndarray) -> np.ndarray:
+def sentinel_mask(
+    rgb: np.ndarray, hematoxylin: np.ndarray | None = None
+) -> np.ndarray:
     pixels = np.asarray(rgb, dtype=np.uint8)
-    concentration = hematoxylin_concentration(pixels)
+    concentration = (
+        hematoxylin_concentration(pixels)
+        if hematoxylin is None
+        else np.asarray(hematoxylin, dtype=np.float64)
+    )
+    if concentration.shape != pixels.shape[:2]:
+        raise ValueError("sentinel hematoxylin field does not match RGB pixels")
     intensity = pixels.astype(np.float64).mean(axis=2)
     return (concentration > 0.90) & (intensity < 105.0)

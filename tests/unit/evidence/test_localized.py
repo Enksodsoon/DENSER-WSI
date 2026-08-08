@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from denser.evidence.localized import LocalizedAcceptanceVerifier
-from denser.evidence.types import AcceptanceContract
+from denser.evidence.types import AcceptanceContract, AcceptanceEvidence
 
 
 def test_localized_verifier_returns_bounded_failed_cells() -> None:
@@ -43,3 +43,18 @@ def test_prepared_verifier_matches_direct_result_and_binds_source() -> None:
     different[-1, -1] = 0
     with pytest.raises(ValueError, match="source"):
         prepared.verify(different, decoded)
+
+
+def test_tile_average_cannot_bypass_cell_level_acceptance(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    source = np.zeros((16, 16, 3), dtype=np.uint8)
+    decoded = source.copy()
+    decoded[:8, :8] = 255
+
+    def fake_evidence(rgb, grid, contract, *, groups=None):  # type: ignore[no-untyped-def]
+        value = 0.0 if rgb.shape[0] == 16 else float(np.asarray(rgb).mean() / 255)
+        return AcceptanceEvidence(contract.version, (("visual", (value,)),), "0" * 64)
+
+    monkeypatch.setattr("denser.evidence.localized.compute_acceptance_evidence", fake_evidence)
+    result = LocalizedAcceptanceVerifier(AcceptanceContract(), 8).verify(source, decoded)
+    assert not result.passed
+    assert any(item.x == 0 and item.y == 0 for item in result.failures)

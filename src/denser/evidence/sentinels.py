@@ -8,13 +8,18 @@ from denser.evidence.types import PhysicalGrid
 
 
 def sentinel_features(
-    rgb: np.ndarray, grid: PhysicalGrid | None = None
+    rgb: np.ndarray,
+    grid: PhysicalGrid | None = None,
+    *,
+    hematoxylin: np.ndarray | None = None,
 ) -> tuple[float, ...]:
     selected_grid = grid or PhysicalGrid(0.25, 0.25)
     pixel_area_um2 = selected_grid.mpp_x * selected_grid.mpp_y
     minimum_pixels = max(1, int(np.ceil(0.05 / pixel_area_um2)))
     maximum_pixels = max(minimum_pixels, int(np.floor(4.0 / pixel_area_um2)))
-    mask = sentinel_mask(np.asarray(rgb, dtype=np.uint8))
+    mask = sentinel_mask(
+        np.asarray(rgb, dtype=np.uint8), hematoxylin=hematoxylin
+    )
     components = [
         component
         for component in connected_components(mask)

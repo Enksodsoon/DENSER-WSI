@@ -10,6 +10,9 @@ class ControlPair:
     kind: str
     expected_group: str | None
     group_deltas: tuple[tuple[str, tuple[float, ...]], ...]
+    cell_group_deltas: tuple[
+        tuple[str, tuple[tuple[float, ...], ...]], ...
+    ] = ()
 
     def __post_init__(self) -> None:
         if self.kind not in {"benign", "harmful"}:
@@ -18,13 +21,19 @@ class ControlPair:
             raise ValueError("harmful controls require an expected group")
         if len({name for name, _values in self.group_deltas}) != len(self.group_deltas):
             raise ValueError("control groups must be unique")
+        if len({name for name, _values in self.cell_group_deltas}) != len(
+            self.cell_group_deltas
+        ):
+            raise ValueError("control cell groups must be unique")
+        if any(not cells for _name, cells in self.cell_group_deltas):
+            raise ValueError("control cell groups must not be empty")
 
 
 @dataclass(frozen=True, slots=True)
 class CalibrationProfile:
     alpha: float
     challenge_control_ids: tuple[str, ...]
-    version: str = "HE-V1-calibration-2"
+    version: str = "HE-V1-calibration-3"
 
     def __post_init__(self) -> None:
         if not 0 < self.alpha < 0.5:

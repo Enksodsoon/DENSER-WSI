@@ -42,7 +42,7 @@ class AllocationEvidence:
 
 @dataclass(frozen=True, slots=True)
 class AcceptanceContract:
-    version: str = "HE-V1-acceptance-2"
+    version: str = "HE-V1-acceptance-3"
     nuclear_relative_tolerance: float = 0.12
     architecture_relative_tolerance: float = 0.12
     sentinel_relative_tolerance: float = 0.01

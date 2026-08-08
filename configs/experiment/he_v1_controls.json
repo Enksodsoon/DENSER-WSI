@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/he_v1_controls.schema.json",
-  "version": "HE-V1-calibration-2",
+  "version": "HE-V1-calibration-3",
   "alpha": 0.05,
   "tile_size_px": 512,
   "spatial_summary_grid": [4, 4],
@@ -17,6 +17,6 @@
     {"name": "local_color_collapse", "expected_group": "visual", "retained_margin_fraction": 0.03125}
   ],
   "challenge_selection": "one mechanism per first five development projects; highest source-only applicability; tile-disjoint from benign fit",
-  "standardization": "median center with max of MAD scale, observed benign envelope, and 1e-6",
+  "standardization": "median center across benign cells with max of MAD scale, observed benign-cell envelope, and 1e-6; thresholds use each tile maximum across all cells and features",
   "threshold_basis": "tile_familywise_max"
 }

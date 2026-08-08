@@ -57,6 +57,9 @@ def test_control_pairs_report_every_he_v1_group() -> None:
         "rare_event_sentinels",
         "visual",
     }
+    assert {name for name, _cells in pair.cell_group_deltas} == {
+        name for name, _values in pair.group_deltas
+    }
 
 
 def test_harmful_controls_change_their_declared_group() -> None:
