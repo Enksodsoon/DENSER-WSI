@@ -14,5 +14,6 @@ def test_encoded_candidate_requires_complete_payload_accounting() -> None:
         breakdown=ByteBreakdown(payload=3),
     )
     assert candidate.complete_bytes == 3
+    assert candidate.attestation == ()
     with pytest.raises(ValueError, match="breakdown"):
         EncodedCandidate("x", "y", b"abc", ByteBreakdown(payload=2))

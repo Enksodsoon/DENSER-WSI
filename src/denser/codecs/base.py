@@ -14,6 +14,7 @@ class EncodedCandidate:
     profile_id: str
     payload: bytes
     breakdown: ByteBreakdown
+    attestation: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.codec_id or not self.profile_id:
