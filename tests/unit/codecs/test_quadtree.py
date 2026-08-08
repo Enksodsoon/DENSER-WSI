@@ -8,6 +8,7 @@ from denser.codecs.lossless import SharedLosslessCodec
 from denser.codecs.quadtree import (
     QuadtreeAllocationMap,
     build_jpegxl_quadtree_candidate,
+    build_jpegxl_quadtree_candidates,
     decode_jpegxl_quadtree_candidate,
 )
 
@@ -49,3 +50,29 @@ def test_quadtree_allocation_rejects_corruption_and_noncoverage() -> None:
     with pytest.raises(ValueError):
         QuadtreeAllocationMap.decode(bytes(damaged))
 
+
+def test_quadtree_grid_predeclares_increasingly_conservative_allocations() -> None:
+    rgb = np.arange(32 * 32 * 3, dtype=np.uint8).reshape(32, 32, 3)
+    sensitivity = np.ones_like(rgb, dtype=np.float64)
+    sensitivity[:16, :16] = np.indices((16, 16)).sum(axis=0)[..., None] + 1
+    candidates = build_jpegxl_quadtree_candidates(
+        rgb,
+        sensitivity,
+        min_leaf=8,
+        codec_factory=LosslessLeafCodec,
+    )
+    assert len(candidates) == 3
+    assert len({candidate.profile_id for candidate in candidates}) == 3
+    high_quality_counts = []
+    for candidate in candidates:
+        allocation = QuadtreeAllocationMap.decode(candidate.allocation_map)
+        high_quality_counts.append(
+            sum(leaf.quality_code == 0 for leaf in allocation.leaves)
+        )
+        decoded = decode_jpegxl_quadtree_candidate(
+            candidate.payload,
+            candidate.allocation_map,
+            codec_factory=LosslessLeafCodec,
+        )
+        np.testing.assert_array_equal(decoded, rgb)
+    assert high_quality_counts == sorted(high_quality_counts)

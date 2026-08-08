@@ -128,6 +128,8 @@ def build_jpegxl_quadtree_candidate(
     sensitivity: np.ndarray,
     *,
     min_leaf: int = 128,
+    allocation_quantiles: tuple[float, float] = (0.5, 0.75),
+    allocation_policy_id: str = "alloc25-25-50",
     codec_factory: Callable[[float], LeafCodec] = JpegXlCodec,
 ) -> EncodedCandidate:
     pixels = np.asarray(rgb)
@@ -136,9 +138,16 @@ def build_jpegxl_quadtree_candidate(
         raise ValueError("quadtree candidate requires matching uint8 RGB and sensitivity")
     if min_leaf < 8 or min_leaf & (min_leaf - 1):
         raise ValueError("quadtree minimum leaf must be a power of two of at least eight")
+    lower_quantile, upper_quantile = allocation_quantiles
+    if not 0 <= lower_quantile < upper_quantile <= 1 or not allocation_policy_id:
+        raise ValueError("quadtree allocation policy is invalid")
     regions = _regions(values, min_leaf)
     means = np.asarray([item[4] for item in regions])
-    lower, upper = np.quantile(means, (0.5, 0.75)) if len(means) > 1 else (means[0], means[0])
+    lower, upper = (
+        np.quantile(means, allocation_quantiles)
+        if len(means) > 1
+        else (means[0], means[0])
+    )
     codes = [0 if mean >= upper else 1 if mean >= lower else 2 for *_region, mean in regions]
 
     def encode_leaf(item):  # type: ignore[no-untyped-def]
@@ -153,7 +162,9 @@ def build_jpegxl_quadtree_candidate(
     )
     allocation = QuadtreeAllocationMap(pixels.shape[1], pixels.shape[0], min_leaf, leaves).encode()
     payload = b"".join(item.payload for item in encoded)
-    profile = f"jxl-evidence-quadtree-min{min_leaf}-d0.5-1-2"
+    profile = (
+        f"jxl-evidence-quadtree-min{min_leaf}-d0.5-1-2-{allocation_policy_id}"
+    )
     return EncodedCandidate(
         "denser-quadtree-jxl-v2",
         profile,
@@ -164,9 +175,28 @@ def build_jpegxl_quadtree_candidate(
 
 
 def build_jpegxl_quadtree_candidates(
-    rgb: np.ndarray, sensitivity: np.ndarray
+    rgb: np.ndarray,
+    sensitivity: np.ndarray,
+    *,
+    min_leaf: int = 128,
+    codec_factory: Callable[[float], LeafCodec] = JpegXlCodec,
 ) -> list[EncodedCandidate]:
-    return [build_jpegxl_quadtree_candidate(rgb, sensitivity)]
+    policies = (
+        ((0.5, 0.75), "alloc25-25-50"),
+        ((0.25, 0.5), "alloc50-25-25"),
+        ((0.0, 0.25), "alloc75-25-0"),
+    )
+    return [
+        build_jpegxl_quadtree_candidate(
+            rgb,
+            sensitivity,
+            min_leaf=min_leaf,
+            allocation_quantiles=quantiles,
+            allocation_policy_id=policy_id,
+            codec_factory=codec_factory,
+        )
+        for quantiles, policy_id in policies
+    ]
 
 
 def decode_jpegxl_quadtree_candidate(
