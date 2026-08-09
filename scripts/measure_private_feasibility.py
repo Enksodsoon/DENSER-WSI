@@ -273,6 +273,8 @@ def main() -> int:
             raise RuntimeError("parallel scaling evidence does not match the runtime")
         if int(parallel_scaling.get("benchmark_tiles", 0)) < 8:
             raise RuntimeError("parallel scaling evidence has too few tiles")
+        if int(parallel_scaling.get("project_batches", 0)) < 6:
+            raise RuntimeError("parallel scaling evidence has too few project batches")
     output = layout.resolve(
         "results",
         arguments.partition,
@@ -461,6 +463,11 @@ def main() -> int:
             worker_count=arguments.worker_count,
             measured_parallel_speedup=(
                 float(parallel_scaling["measured_parallel_speedup"])
+                if parallel_scaling is not None
+                else None
+            ),
+            measured_parallel_tile_seconds=(
+                float(parallel_scaling["parallel_effective_tile_seconds"])
                 if parallel_scaling is not None
                 else None
             ),

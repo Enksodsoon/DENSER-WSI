@@ -35,6 +35,7 @@ class RuntimeProjection:
     p95_tile_pipeline_seconds: float
     worker_count: int
     measured_parallel_speedup: float
+    measured_parallel_tile_seconds: float
     parallel_benchmark_tiles: int
     safety_factor: float
     projected_confirmatory_seconds: float
@@ -67,6 +68,7 @@ def project_confirmatory_runtime(
     final_source_bytes: int,
     worker_count: int,
     measured_parallel_speedup: float | None = None,
+    measured_parallel_tile_seconds: float | None = None,
     parallel_benchmark_tiles: int = 0,
     safety_factor: float = 1.25,
 ) -> RuntimeProjection:
@@ -83,7 +85,9 @@ def project_confirmatory_runtime(
         raise ValueError("final source byte total must be positive")
     if worker_count < 1 or worker_count > 6:
         raise ValueError("worker count must remain between one and six")
-    if worker_count > 2 and measured_parallel_speedup is None:
+    if worker_count > 2 and (
+        measured_parallel_speedup is None or measured_parallel_tile_seconds is None
+    ):
         raise ValueError("measured parallel scaling is required above two workers")
     if measured_parallel_speedup is not None:
         if (
@@ -96,6 +100,11 @@ def project_confirmatory_runtime(
             raise ValueError("measured parallel scaling requires at least eight tiles")
     elif parallel_benchmark_tiles:
         raise ValueError("parallel benchmark tiles require measured parallel speedup")
+    if measured_parallel_tile_seconds is not None and (
+        not math.isfinite(measured_parallel_tile_seconds)
+        or measured_parallel_tile_seconds <= 0
+    ):
+        raise ValueError("measured parallel tile time must be positive and finite")
     if not math.isfinite(safety_factor) or safety_factor < 1:
         raise ValueError("runtime safety factor must be finite and at least one")
     density = max(sample.level0_tiles / sample.source_bytes for sample in samples)
@@ -104,7 +113,12 @@ def project_confirmatory_runtime(
         [value for sample in samples for value in sample.tile_pipeline_seconds]
     )
     effective_speedup = measured_parallel_speedup or float(worker_count)
-    projected_seconds = projected_tiles * p95_seconds * safety_factor / effective_speedup
+    effective_tile_seconds = (
+        measured_parallel_tile_seconds
+        if measured_parallel_tile_seconds is not None
+        else p95_seconds / effective_speedup
+    )
+    projected_seconds = projected_tiles * effective_tile_seconds * safety_factor
     return RuntimeProjection(
         (
             "development-max-density-p95-measured-scaling-v2"
@@ -117,6 +131,7 @@ def project_confirmatory_runtime(
         p95_seconds,
         worker_count,
         effective_speedup,
+        effective_tile_seconds,
         parallel_benchmark_tiles,
         safety_factor,
         projected_seconds,

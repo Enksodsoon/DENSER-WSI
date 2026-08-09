@@ -70,12 +70,14 @@ def test_projection_uses_conservative_measured_parallel_speedup() -> None:
         final_source_bytes=10_000,
         worker_count=6,
         measured_parallel_speedup=2.25,
+        measured_parallel_tile_seconds=0.9,
         parallel_benchmark_tiles=12,
     )
     assert report.measured_parallel_speedup == 2.25
+    assert report.measured_parallel_tile_seconds == 0.9
     assert report.parallel_benchmark_tiles == 12
     assert report.projected_confirmatory_seconds == pytest.approx(
-        1_000 * 2.0 * 1.25 / 2.25
+        1_000 * 0.9 * 1.25
     )
 
 

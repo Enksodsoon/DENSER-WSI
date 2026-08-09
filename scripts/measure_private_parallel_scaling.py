@@ -42,7 +42,7 @@ def main() -> int:
     parser.add_argument("--generation", type=int, required=True)
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--codec-subprocesses", type=int, default=2)
-    parser.add_argument("--tiles-per-slide", type=int, default=2)
+    parser.add_argument("--tiles-per-slide", type=int, default=8)
     parser.add_argument("--repeats", type=int, default=2)
     parser.add_argument("--seed", type=int, default=20260808)
     arguments = parser.parse_args()
@@ -50,8 +50,8 @@ def main() -> int:
         raise ValueError("parallel scaling workers must be between three and six")
     if not 1 <= arguments.codec_subprocesses <= 2:
         raise ValueError("codec subprocesses must be one or two")
-    if arguments.tiles_per_slide < 2 or arguments.repeats < 2:
-        raise ValueError("scaling requires at least two tiles per slide and two repeats")
+    if arguments.tiles_per_slide < 8 or arguments.repeats < 2:
+        raise ValueError("scaling requires at least eight tiles per slide and two repeats")
 
     layout = RunLayout(arguments.repo_root, arguments.run_root)
     manifest_path = layout.resolve(
@@ -82,7 +82,7 @@ def main() -> int:
     routing_bytes = routing_path.read_bytes()
     routes = json.loads(routing_bytes)["routes"]
 
-    work_items = []
+    work_batches = []
     for slide_ordinal, source in enumerate(sources):
         slide = openslide.OpenSlide(str(source.path))
         try:
@@ -98,11 +98,14 @@ def main() -> int:
         ladder = ladder_from_profile_ids(
             tuple(str(value) for value in routes[source.record.project_id])
         )
-        work_items.extend(
-            (source.path, address, rgb, grid, ladder) for address, rgb in sampled
+        work_batches.append(
+            tuple(
+                (source.path, address, rgb, grid, ladder) for address, rgb in sampled
+            )
         )
-    if len(work_items) < 8:
-        raise RuntimeError("parallel scaling requires at least eight real tiles")
+    benchmark_tiles = sum(len(batch) for batch in work_batches)
+    if len(work_batches) < 6 or any(len(batch) < 8 for batch in work_batches):
+        raise RuntimeError("parallel scaling requires six eight-tile project batches")
 
     registry = build_default_registry()
     codec_slots = threading.Semaphore(arguments.codec_subprocesses)
@@ -146,30 +149,52 @@ def main() -> int:
         )
         return standard.packet, denser.packet
 
-    encode(work_items[0])
     serial_seconds = []
     parallel_seconds = []
-    reference_packets = None
+    batch_reports = []
     with _PeakContainerRss() as memory:
-        for _repeat in range(arguments.repeats):
-            started = time.perf_counter()
-            packets = [encode(item) for item in work_items]
-            serial_seconds.append(time.perf_counter() - started)
-            if reference_packets is None:
-                reference_packets = packets
-            elif packets != reference_packets:
-                raise RuntimeError("serial scaling packets are nondeterministic")
-        for _repeat in range(arguments.repeats):
-            started = time.perf_counter()
-            with ThreadPoolExecutor(max_workers=arguments.workers) as pool:
-                packets = list(pool.map(encode, work_items))
-            parallel_seconds.append(time.perf_counter() - started)
-            if packets != reference_packets:
-                raise RuntimeError("parallel scaling changed encoded packets")
+        for batch_ordinal, work_items in enumerate(work_batches):
+            encode(work_items[0])
+            batch_serial = []
+            batch_parallel = []
+            reference_packets = None
+            for _repeat in range(arguments.repeats):
+                started = time.perf_counter()
+                packets = [encode(item) for item in work_items]
+                elapsed = time.perf_counter() - started
+                batch_serial.append(elapsed)
+                serial_seconds.append(elapsed)
+                if reference_packets is None:
+                    reference_packets = packets
+                elif packets != reference_packets:
+                    raise RuntimeError("serial scaling packets are nondeterministic")
+            for _repeat in range(arguments.repeats):
+                started = time.perf_counter()
+                with ThreadPoolExecutor(max_workers=arguments.workers) as pool:
+                    packets = list(pool.map(encode, work_items))
+                elapsed = time.perf_counter() - started
+                batch_parallel.append(elapsed)
+                parallel_seconds.append(elapsed)
+                if packets != reference_packets:
+                    raise RuntimeError("parallel scaling changed encoded packets")
+            batch_reports.append(
+                {
+                    "batch_ordinal": batch_ordinal,
+                    "tiles": len(work_items),
+                    "serial_seconds": batch_serial,
+                    "parallel_seconds": batch_parallel,
+                    "conservative_speedup": min(batch_serial) / max(batch_parallel),
+                    "parallel_effective_tile_seconds": max(batch_parallel)
+                    / len(work_items),
+                }
+            )
 
-    conservative_serial = min(serial_seconds)
-    conservative_parallel = max(parallel_seconds)
-    speedup = conservative_serial / conservative_parallel
+    speedup = sum(min(batch["serial_seconds"]) for batch in batch_reports) / sum(
+        max(batch["parallel_seconds"]) for batch in batch_reports
+    )
+    parallel_effective_tile_seconds = max(
+        float(batch["parallel_effective_tile_seconds"]) for batch in batch_reports
+    )
     if speedup <= 1:
         raise RuntimeError("parallel scaling did not improve throughput")
     identity = {
@@ -182,15 +207,17 @@ def main() -> int:
         "sampling_seed": arguments.seed,
         "workers": arguments.workers,
         "codec_subprocesses": arguments.codec_subprocesses,
-        "benchmark_tiles": len(work_items),
+        "benchmark_tiles": benchmark_tiles,
+        "project_batches": len(work_batches),
         "repeats": arguments.repeats,
     }
     report = {
         **identity,
         "serial_seconds": serial_seconds,
         "parallel_seconds": parallel_seconds,
+        "batches": batch_reports,
         "measured_parallel_speedup": speedup,
-        "parallel_effective_tile_seconds": conservative_parallel / len(work_items),
+        "parallel_effective_tile_seconds": parallel_effective_tile_seconds,
         "peak_container_rss_bytes": memory.peak_bytes,
         "packets_equal": True,
         "source_data_processed": True,
@@ -205,8 +232,10 @@ def main() -> int:
     print(
         json.dumps(
             {
-                "benchmark_tiles": len(work_items),
+                "benchmark_tiles": benchmark_tiles,
+                "project_batches": len(work_batches),
                 "measured_parallel_speedup": speedup,
+                "parallel_effective_tile_seconds": parallel_effective_tile_seconds,
                 "packets_equal": True,
                 "peak_container_rss_bytes": memory.peak_bytes,
             },
