@@ -21,19 +21,12 @@ from denser.evidence.controls_v1 import (
 )
 from denser.evidence.types import PhysicalGrid
 from denser.governance.run_layout import RunLayout
+from denser.wsi.metadata import MetadataError, resolve_mpp_in_band
 
 
 def _mpp(slide) -> PhysicalGrid:  # type: ignore[no-untyped-def]
-    properties = slide.properties
-    shared = properties.get("aperio.MPP")
-    x = properties.get("openslide.mpp-x", shared)
-    y = properties.get("openslide.mpp-y", shared)
-    if x is None or y is None:
-        raise ValueError("development slide lacks physical-scale metadata")
-    grid = PhysicalGrid(float(x), float(y))
-    if not (0.1 <= grid.mpp_x <= 1.0 and 0.1 <= grid.mpp_y <= 1.0):
-        raise ValueError("development slide physical scale is outside frozen range")
-    return grid
+    mpp = resolve_mpp_in_band(slide.properties, minimum=0.20, maximum=0.30)
+    return PhysicalGrid(mpp, mpp)
 
 
 def _sample_tiles(path: Path, count: int, search_grid: int) -> list[tuple[np.ndarray, PhysicalGrid]]:
@@ -79,15 +72,29 @@ def main() -> int:
         expected_count=6,
     )
     sampled_slides: list[list[tuple[np.ndarray, str, PhysicalGrid]]] = []
+    metadata_exclusions: list[dict[str, object]] = []
     for slide_index, source in enumerate(sources):
+        try:
+            sampled = _sample_tiles(
+                source.path, arguments.tiles_per_slide, arguments.search_grid
+            )
+        except MetadataError:
+            metadata_exclusions.append(
+                {
+                    "slide_index": slide_index,
+                    "reason_code": "physical_scale_missing_or_outside_primary_band",
+                    "outcome_inspected": False,
+                }
+            )
+            continue
         sampled_slides.append(
             [
                 (rgb, f"slide-{slide_index:02d}-tile-{tile_index:02d}", grid)
-                for tile_index, (rgb, grid) in enumerate(
-                    _sample_tiles(source.path, arguments.tiles_per_slide, arguments.search_grid)
-                )
+                for tile_index, (rgb, grid) in enumerate(sampled)
             ]
         )
+    if not sampled_slides:
+        raise RuntimeError("no development slides satisfy the primary physical-scale band")
     benign, harmful = build_balanced_control_cohort(
         sampled_slides, seed=arguments.seed
     )
@@ -97,8 +104,11 @@ def main() -> int:
     calibration = calibrate_contract(list(benign), profile)
     audit = verify_calibration(calibration, list(harmful))
     document: dict[str, object] = {
-        "version": "DENSER-private-development-calibration-1",
-        "slide_count": len(sources),
+        "version": "DENSER-private-development-calibration-2-primary-mpp-band",
+        "selected_slide_count": len(sources),
+        "slide_count": len(sampled_slides),
+        "phase_classification": "not_evaluable" if metadata_exclusions else "evaluable",
+        "metadata_exclusions": metadata_exclusions,
         "fit_tile_count": len(benign),
         "challenge_tile_count": len(harmful),
         "calibration": asdict(calibration),
@@ -115,7 +125,8 @@ def main() -> int:
         json.dumps(
             {
                 "status": audit.status,
-                "slides": len(sources),
+                "slides": len(sampled_slides),
+                "excluded_slides": len(metadata_exclusions),
                 "fit_tiles": len(benign),
                 "challenge_tiles": len(harmful),
                 "missed_challenges": len(audit.missed_control_ids),

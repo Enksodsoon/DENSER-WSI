@@ -1,5 +1,22 @@
 # Decision Log
 
+## 2026-08-09 — Primary-scale calibration audit
+
+- A pre-freeze audit found that the private calibration utility still admitted
+  the earlier 0.10–1.00 micrometre-per-pixel development range even though the
+  authoritative primary band is 0.20–0.30. The resulting calibration record is
+  retired and cannot support a final freeze.
+- Calibration, the development configuration, and verified real-tile
+  benchmarking now fail closed outside 0.20–0.30. Ineligible slides are
+  excluded from calibration before pixel outcomes are inspected and are
+  recorded only by private ordinal and reason code.
+- Strict-band exploratory reruns found 5/6 eligible development slides and 3/6
+  eligible slides in each of pilot and tuning. All three phases are therefore
+  `not_evaluable`; their sampled reductions are mechanism evidence only and are
+  not whole-slide or confirmatory claims.
+- HE-V1 calibration and all downstream sampled phases must be rerun from the
+  corrected primary-band implementation before any automatic freeze.
+
 ## 2026-08-08 — Audited reconstruction
 
 - Original ZIP and bundle unavailable; reconstruct from authenticated plan.

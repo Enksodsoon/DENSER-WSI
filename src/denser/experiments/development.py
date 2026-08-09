@@ -16,7 +16,7 @@ class DevelopmentConfig:
     output_root: Path
     candidate_steps: tuple[float, ...] = (1.0, 2.0, 4.0)
     allowed_step_range: tuple[float, float] = (0.5, 8.0)
-    mpp_range: tuple[float, float] = (0.10, 1.00)
+    mpp_range: tuple[float, float] = (0.20, 0.30)
     control_pairs: tuple[ControlPair, ...] = ()
     measured_source_bytes: int = 0
     measured_peak_scratch_bytes: int = 0

@@ -86,6 +86,7 @@ def main() -> int:
         )
         from denser.evidence.types import AcceptanceContract, PhysicalGrid
         from denser.experiments.candidate_selection import select_smallest_accepted_candidate
+        from denser.wsi.metadata import resolve_mpp_in_band
 
         registry = build_default_registry()
         contract = AcceptanceContract()
@@ -97,14 +98,8 @@ def main() -> int:
             contract = acceptance_contract_from_calibration(
                 calibration_record_from_dict(calibration_document["calibration"])
             )
-        shared_mpp = slide.properties.get("aperio.MPP")
-        mpp_x = slide.properties.get("openslide.mpp-x", shared_mpp)
-        mpp_y = slide.properties.get("openslide.mpp-y", shared_mpp)
-        if mpp_x is None or mpp_y is None:
-            raise ValueError("verified benchmark requires physical-scale metadata")
-        grid = PhysicalGrid(float(mpp_x), float(mpp_y))
-        if not (0.1 <= grid.mpp_x <= 1.0 and 0.1 <= grid.mpp_y <= 1.0):
-            raise ValueError("physical scale is outside the frozen development range")
+        mpp = resolve_mpp_in_band(slide.properties, minimum=0.20, maximum=0.30)
+        grid = PhysicalGrid(mpp, mpp)
         portfolios = {
             "standard": build_standard_candidates(rgb, StandardLadder()),
             "uniform": uniform_candidates,

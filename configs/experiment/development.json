@@ -1,6 +1,6 @@
 {
   "candidate_steps": [1.0, 2.0, 4.0],
   "allowed_step_range": [0.5, 8.0],
-  "mpp_range": [0.1, 1.0],
+  "mpp_range": [0.2, 0.3],
   "private_output": "results/development"
 }
