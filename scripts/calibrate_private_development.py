@@ -22,11 +22,16 @@ from denser.evidence.controls_v1 import (
 from denser.evidence.types import PhysicalGrid
 from denser.governance.run_layout import RunLayout
 from denser.wsi.metadata import MetadataError, resolve_mpp_in_band
+from denser.wsi.sampling import measure_content
 
 
 def _mpp(slide) -> PhysicalGrid:  # type: ignore[no-untyped-def]
     mpp = resolve_mpp_in_band(slide.properties, minimum=0.20, maximum=0.30)
     return PhysicalGrid(mpp, mpp)
+
+
+def _calibration_tissue_score(rgb: np.ndarray) -> float:
+    return measure_content(rgb)[0]
 
 
 def _sample_tiles(path: Path, count: int, search_grid: int) -> list[tuple[np.ndarray, PhysicalGrid]]:
@@ -37,18 +42,29 @@ def _sample_tiles(path: Path, count: int, search_grid: int) -> list[tuple[np.nda
         grid = _mpp(slide)
         width, height = slide.dimensions
         size = 512
-        candidates: list[tuple[float, np.ndarray, PhysicalGrid]] = []
-        for y in np.linspace(0, max(0, height - size), search_grid, dtype=int):
-            for x in np.linspace(0, max(0, width - size), search_grid, dtype=int):
-                rgb = np.asarray(
-                    slide.read_region((int(x), int(y)), 0, (size, size)).convert("RGB"),
-                    dtype=np.uint8,
-                )
-                intensity = rgb.astype(np.float64).mean(axis=2)
-                tissue = float(np.mean((intensity < 240) & (intensity > 20)))
-                candidates.append((tissue, rgb, grid))
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        return [(rgb, physical) for _score, rgb, physical in candidates[:count]]
+        candidates: dict[tuple[int, int], tuple[float, np.ndarray, PhysicalGrid]] = {}
+
+        def scan(grid_size: int) -> None:
+            for y in np.linspace(0, max(0, height - size), grid_size, dtype=int):
+                for x in np.linspace(0, max(0, width - size), grid_size, dtype=int):
+                    coordinate = (int(x), int(y))
+                    if coordinate in candidates:
+                        continue
+                    rgb = np.asarray(
+                        slide.read_region(coordinate, 0, (size, size)).convert("RGB"),
+                        dtype=np.uint8,
+                    )
+                    candidates[coordinate] = (_calibration_tissue_score(rgb), rgb, grid)
+
+        scan(search_grid)
+        eligible = [row for row in candidates.values() if row[0] >= 0.10]
+        if len(eligible) < count:
+            scan(max(search_grid + 1, search_grid * 3))
+            eligible = [row for row in candidates.values() if row[0] >= 0.10]
+        if len(eligible) < count:
+            raise RuntimeError("development slide has insufficient tissue for calibration")
+        eligible.sort(key=lambda item: item[0], reverse=True)
+        return [(rgb, physical) for _score, rgb, physical in eligible[:count]]
     finally:
         slide.close()
 

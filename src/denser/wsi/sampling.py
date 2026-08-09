@@ -72,7 +72,7 @@ class TileSampleManifest:
         return canonical_json_bytes(self._document(include_digest=True))
 
 
-def _measure(rgb: np.ndarray) -> tuple[float, float, str]:
+def measure_content(rgb: np.ndarray) -> tuple[float, float, str]:
     pixels = np.asarray(rgb)
     if pixels.dtype != np.uint8 or pixels.ndim != 3 or pixels.shape[2] != 3:
         raise ValueError("sampling requires canonical uint8 RGB pixels")
@@ -108,7 +108,7 @@ def freeze_sample(
     width, height = slide.level_dimensions[0]
     candidates: dict[str, list[TileSample]] = {stratum: [] for stratum in STRATA}
     for address in iter_level0_grid(width, height, config.tile_size):
-        tissue_fraction, artifact_fraction, stratum = _measure(
+        tissue_fraction, artifact_fraction, stratum = measure_content(
             slide.read_level0_region(address)
         )
         candidates[stratum].append(

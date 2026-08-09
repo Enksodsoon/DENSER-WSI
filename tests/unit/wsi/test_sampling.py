@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from denser.core.models import TileAddress
-from denser.wsi.sampling import SamplingConfig, freeze_sample
+from denser.wsi.sampling import SamplingConfig, freeze_sample, measure_content
 
 
 class _FakeSlide:
@@ -58,3 +58,12 @@ def test_sampling_seed_changes_order_not_content_measurements() -> None:
         for row in second.rows
     }
     assert by_coordinate_a == by_coordinate_b
+
+
+def test_uniform_gray_is_not_tissue() -> None:
+    tissue, artifact, stratum = measure_content(
+        np.full((512, 512, 3), 128, dtype=np.uint8)
+    )
+    assert tissue == 0.0
+    assert artifact == 0.0
+    assert stratum == "low_tissue"
