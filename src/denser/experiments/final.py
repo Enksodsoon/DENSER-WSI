@@ -43,6 +43,7 @@ class FinalSlideInput:
     mpp: float = 0.25
     source_candidate_builder: Callable[[TileAddress], EncodedCandidate] | None = None
     standard_ladder: StandardLadder | None = None
+    close_reader: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,6 +370,8 @@ def run_final_holdout(
             for address in addresses:
                 counts[(slide.research_id, method, address)] = 1
         encoded_addresses.update(addresses)
+        if slide.close_reader is not None:
+            slide.close_reader()
     return FinalHoldoutResult(
         encoded_addresses,
         counts,

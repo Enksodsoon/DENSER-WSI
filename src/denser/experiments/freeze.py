@@ -112,6 +112,45 @@ def verify_freeze_record(record: FreezeRecord, context: FreezeContext) -> None:
         raise FreezeViolation("runtime context differs from the final freeze")
 
 
+def freeze_record_from_dict(document: dict[str, object]) -> FreezeRecord:
+    try:
+        record = FreezeRecord(
+            version=str(document["version"]),
+            git_commit=str(document["git_commit"]),
+            clean_tree=bool(document["clean_tree"]),
+            container_image_digest=str(document["container_image_digest"]),
+            sbom_digest=str(document["sbom_digest"]),
+            dependency_versions=tuple(
+                (str(item[0]), str(item[1]))
+                for item in document["dependency_versions"]  # type: ignore[union-attr]
+            ),
+            configuration_digest=str(document["configuration_digest"]),
+            partition_manifest_digest=str(document["partition_manifest_digest"]),
+            reserve_manifest_digest=str(document["reserve_manifest_digest"]),
+            selected_profile_id=str(document["selected_profile_id"]),
+            profile_digest=str(document["profile_digest"]),
+            standard_candidate_ladders=tuple(
+                (str(item[0]), tuple(float(value) for value in item[1]))
+                for item in document["standard_candidate_ladders"]  # type: ignore[union-attr]
+            ),
+            evidence_tolerances=tuple(
+                (str(item[0]), float(item[1]))
+                for item in document["evidence_tolerances"]  # type: ignore[union-attr]
+            ),
+            evidence_implementation_digest=str(document["evidence_implementation_digest"]),
+            analysis_code_digest=str(document["analysis_code_digest"]),
+            random_seeds=tuple(int(value) for value in document["random_seeds"]),  # type: ignore[union-attr]
+            expected_final_slide_count=int(document["expected_final_slide_count"]),
+            freeze_digest=str(document["freeze_digest"]),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise FreezeViolation("freeze record mapping is invalid") from error
+    actual = hashlib.sha256(canonical_json_bytes(record.unsigned_document())).hexdigest()
+    if record.version != "DENSER-freeze-1" or record.freeze_digest != actual:
+        raise FreezeViolation("freeze record document digest is invalid")
+    return record
+
+
 def _atomic_write(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)

@@ -51,6 +51,24 @@
   sampled phases, freeze, and holdout; no Generation 1 final source may enter
   tuning or inference.
 
+## 2026-08-09 — Generation 2 pre-outcome comparator and resume policy
+
+- Before any Generation 2 pixel outcome was inspected, the exact project-routed
+  standard policy selected on Generation 1 development data was copied forward
+  byte-for-byte. Generation 2 cannot retune this policy; the full 12-profile
+  ladder remains a development-only sensitivity analysis.
+- The confirmatory methods are the routed standard comparator and the smaller
+  of that accepted result or the self-contained source-segment composition.
+  The retired uniform-DCT mechanism is not part of this generation.
+- MC-V2 final writers now use freeze-bound append journals plus a shared
+  multi-method checkpoint. Resume verifies packet digests, truncates work after
+  the last shared checkpoint, and fails closed for mismatched freeze identity,
+  partial finalization, or completion-marker tampering.
+- The automatic freeze binds the full runtime tree, configurations, private
+  manifest and reserves, calibration, routing, SBOM, container digest, and the
+  predeclared novelty hypothesis. None of these records authorize a novelty
+  claim before the technical and prior-art gates pass.
+
 ## 2026-08-08 — Audited reconstruction
 
 - Original ZIP and bundle unavailable; reconstruct from authenticated plan.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -10,6 +10,7 @@ from denser.core.errors import FreezeViolation
 from denser.experiments.freeze import (
     FreezeContext,
     create_freeze_record,
+    freeze_record_from_dict,
     verify_freeze_record,
     write_freeze_record,
 )
@@ -55,3 +56,12 @@ def test_freeze_is_written_atomically_with_digest_sidecar(tmp_path: Path) -> Non
     assert path.exists()
     assert path.with_name("freeze-record.json.sha256").read_text().strip() == hashlib.sha256(path.read_bytes()).hexdigest()
     verify_freeze_record(record, context())
+
+
+def test_freeze_record_mapping_round_trip_is_intrinsically_verified() -> None:
+    record = create_freeze_record(context())
+    assert freeze_record_from_dict(asdict(record)) == record
+    tampered = asdict(record)
+    tampered["selected_profile_id"] = "changed"
+    with pytest.raises(FreezeViolation, match="digest"):
+        freeze_record_from_dict(tampered)
