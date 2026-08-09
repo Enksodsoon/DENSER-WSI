@@ -33,6 +33,24 @@
   scale from bounded metadata reads before assigning partitions. This is a
   cohort-integrity correction, not a mechanism change or outcome-driven retune.
 
+## 2026-08-09 — Generation 2 scale-prefiltered cohort
+
+- The official query returned 10,468 open, released SVS slide records across
+  the six primary projects. Candidate order was derived from a new private salt;
+  physical-scale metadata was checked before partition assignment.
+- Generation 2 contains 48 unique, case-disjoint sources: 6 development, 6
+  pilot, 6 tuning, 18 final, and 12 prefrozen reserves. Each project contributes
+  eight sources, every source is within 0.20–0.30 micrometres per pixel, and no
+  case or file overlaps Generation 1.
+- The selected sources total 22,516,188,238 bytes including reserves. The
+  manifest and salt remain under the private run root. No compression outcome
+  was inspected during selection.
+- Generation 2 retains the source-segment composition hypothesis because
+  Generation 1 was not evaluable for cohort metadata, not falsified on a final
+  compression endpoint. It receives a fresh calibration, routing selection,
+  sampled phases, freeze, and holdout; no Generation 1 final source may enter
+  tuning or inference.
+
 ## 2026-08-08 — Audited reconstruction
 
 - Original ZIP and bundle unavailable; reconstruct from authenticated plan.
