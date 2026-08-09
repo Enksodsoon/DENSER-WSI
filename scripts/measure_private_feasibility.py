@@ -235,7 +235,7 @@ def main() -> int:
         "results",
         "development",
         "generation-1",
-        f"feasibility-source-extension-{arguments.tiles_per_slide}-w{arguments.candidate_workers}-{'routed' if routing else 'full'}.private.json",
+        f"feasibility-source-extension-{arguments.tiles_per_slide}-w{arguments.candidate_workers}-{'route-' + routing_digest[:12] if routing else 'full'}.private.json",
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     identity = {
