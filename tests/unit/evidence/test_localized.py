@@ -4,7 +4,10 @@ import numpy as np
 import pytest
 
 from denser.evidence.localized import LocalizedAcceptanceVerifier
-from denser.evidence.architecture import compute_acceptance_evidence
+from denser.evidence.architecture import (
+    compute_acceptance_evidence,
+    compute_acceptance_groups,
+)
 from denser.evidence.types import AcceptanceContract, AcceptanceEvidence
 
 
@@ -122,3 +125,36 @@ def test_prepared_verifier_reuses_candidate_evidence_after_verification(
     )
     evidence = prepared.evidence_for(decoded)
     assert evidence.version == prepared.contract.version
+
+
+def test_nondivisible_edge_tile_batches_full_core_cells(monkeypatch) -> None:
+    source = np.random.default_rng(91).integers(0, 256, (70, 75, 3), dtype=np.uint8)
+    prepared = LocalizedAcceptanceVerifier(AcceptanceContract(), 32).prepare(source)
+    calls = 0
+    real_compute = compute_acceptance_groups
+
+    def counted(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        return real_compute(*args, **kwargs)
+
+    monkeypatch.setattr("denser.evidence.localized.compute_acceptance_groups", counted)
+    prepared.prepare_cells()
+    assert calls == 5
+
+
+def test_nondivisible_hybrid_batch_matches_scalar_acceptance(monkeypatch) -> None:
+    source = np.random.default_rng(92).integers(0, 256, (70, 75, 3), dtype=np.uint8)
+    decoded = source.copy()
+    decoded[4:20, 4:20] //= 2
+    decoded[64:, 64:] = 255
+    verifier = LocalizedAcceptanceVerifier(
+        AcceptanceContract(visual_relative_tolerance=0.01), 32
+    )
+    hybrid = verifier.verify(source, decoded)
+    monkeypatch.setattr(
+        "denser.evidence.localized.compute_cell_acceptance_batch",
+        lambda *args, **kwargs: None,
+    )
+    scalar = verifier.verify(source, decoded)
+    assert hybrid == scalar

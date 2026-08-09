@@ -103,8 +103,16 @@ class PreparedLocalizedAcceptanceVerifier:
             "rare_event_sentinels",
             "visual",
         ):
-            batched = compute_cell_acceptance_batch(
-                self._source, self.physical_grid, self.cell_size_px
+            batch_height = height - height % self.cell_size_px
+            batch_width = width - width % self.cell_size_px
+            batched = (
+                compute_cell_acceptance_batch(
+                    self._source[:batch_height, :batch_width],
+                    self.physical_grid,
+                    self.cell_size_px,
+                )
+                if min(batch_height, batch_width) >= self.cell_size_px
+                else None
             )
             if batched is not None:
                 self._cell_batch_reference = batched
@@ -141,9 +149,21 @@ class PreparedLocalizedAcceptanceVerifier:
         acceptance_groups = tuple(name for name, _values in self._reference.groups)
         candidate_batch = (
             compute_cell_acceptance_batch(
-                candidate, self.physical_grid, self.cell_size_px
+                candidate[
+                    : max(
+                        (y + height for _x, y, _width, height in self._cell_batch_reference.bounds),
+                        default=0,
+                    ),
+                    : max(
+                        (x + width for x, _y, width, _height in self._cell_batch_reference.bounds),
+                        default=0,
+                    ),
+                ],
+                self.physical_grid,
+                self.cell_size_px,
             )
-            if acceptance_groups
+            if self._cell_batch_reference is not None
+            and acceptance_groups
             == (
                 "nuclear_objects",
                 "architecture",
@@ -167,9 +187,10 @@ class PreparedLocalizedAcceptanceVerifier:
                 cell_width = min(self.cell_size_px, width - x)
                 key = (x, y, cell_width, cell_height, acceptance_groups)
                 reference = self._cell_references[key]
+                batch_key = (x, y, cell_width, cell_height)
                 failed_groups = (
-                    batched_failures[(x, y, cell_width, cell_height)]
-                    if batched_failures is not None
+                    batched_failures[batch_key]
+                    if batched_failures is not None and batch_key in batched_failures
                     else compare_acceptance_groups(
                         reference,
                         compute_acceptance_groups(
