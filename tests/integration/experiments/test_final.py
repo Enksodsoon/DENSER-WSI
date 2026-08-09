@@ -7,7 +7,10 @@ import time
 import numpy as np
 
 import denser.experiments.candidate_selection as selection_module
+from denser.codecs.base import EncodedCandidate
 from denser.codecs.lossless import SharedLosslessCodec
+from denser.codecs.registry import CodecRegistry
+from denser.core.models import ByteBreakdown
 from denser.data.manifest import PartitionManifest, SlideRecord
 from denser.experiments.final import (
     FinalHoldoutConfig,
@@ -88,6 +91,46 @@ def test_final_forbids_sample_extrapolation(tmp_path: Path) -> None:
         quadtree_builder=no_quadtree,
     )
     assert not config.sampled_tile_extrapolation_for_primary_endpoint_allowed
+
+
+def test_final_source_extension_reuses_standard_and_selects_smaller_exact_packet(
+    tmp_path: Path,
+) -> None:
+    tile = np.full((8, 8, 3), 91, dtype=np.uint8)
+    registry = CodecRegistry()
+    registry.register(
+        "fixture-source", lambda payload, allocation, shape, profile: tile.copy()
+    )
+    slide = FinalSlideInput(
+        "one-tile",
+        8,
+        8,
+        8,
+        lambda address: tile.copy(),
+        source_candidate_builder=lambda address: EncodedCandidate(
+            "fixture-source", "source-extension", b"x", ByteBreakdown(payload=1)
+        ),
+    )
+    row = SlideRecord("one-tile", "SYNTHETIC", "4" * 64, "5" * 64, 1, "final", None)
+    manifest = PartitionManifest("MC-V1-manifest-1", 9, (row,), "e" * 64)
+    context = freeze_context()
+    result = run_final_holdout(
+        FinalHoldoutConfig(
+            tmp_path,
+            (slide,),
+            context,
+            methods=("standard", "denser"),
+            cpu_workers=1,
+            standard_builder=lossless_standard,
+            codec_registry=registry,
+        ),
+        manifest,
+        create_freeze_record(context),
+    )
+    assert len(result.address_method_counts) == 2
+    sizes = {container.method: container.complete_bytes for container in result.containers}
+    assert sizes["denser"] < sizes["standard"]
+    assert result.random_tiles_independently_decodable
 
 
 def test_final_skips_certificates_for_byte_dominated_candidates(

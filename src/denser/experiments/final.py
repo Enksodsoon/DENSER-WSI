@@ -19,6 +19,8 @@ from denser.data.manifest import PartitionManifest
 from denser.evidence.localized import LocalizedAcceptanceVerifier
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
 from denser.experiments.candidate_selection import (
+    AcceptedTileCandidate,
+    choose_smallest_accepted_result,
     decode_and_verify_tile_packet,
     select_smallest_accepted_candidate,
 )
@@ -34,6 +36,8 @@ class FinalSlideInput:
     tile_size: int
     read_tile: Callable[[TileAddress], np.ndarray]
     mpp: float = 0.25
+    source_candidate_builder: Callable[[TileAddress], EncodedCandidate] | None = None
+    standard_ladder: StandardLadder | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,8 +58,15 @@ class FinalHoldoutConfig:
     def __post_init__(self) -> None:
         if self.sampled_tile_extrapolation_for_primary_endpoint_allowed:
             raise ValueError("sampled tile extrapolation is prohibited for the primary endpoint")
-        if self.methods != ("standard", "uniform", "denser"):
+        if self.methods not in {
+            ("standard", "uniform", "denser"),
+            ("standard", "denser"),
+        }:
             raise ValueError("final method set is frozen")
+        if self.methods == ("standard", "denser") and any(
+            slide.source_candidate_builder is None for slide in self.slides
+        ):
+            raise ValueError("source-extension final method requires a bound candidate builder")
         if not 1 <= self.cpu_workers <= 6:
             raise ValueError("final CPU workers must be between one and six")
 
@@ -131,11 +142,16 @@ def run_final_holdout(
             ).prepare(tile)
             encoded_methods = []
             sensitivity: np.ndarray | None = None
+            standard_selected: AcceptedTileCandidate | None = None
             for method in config.methods:
                 if method == "standard":
-                    candidates = config.standard_builder(tile, config.standard_ladder)
+                    candidates = config.standard_builder(
+                        tile, slide.standard_ladder or config.standard_ladder
+                    )
                 elif method == "uniform":
                     candidates = build_uniform_candidates(tile, profile)
+                elif slide.source_candidate_builder is not None:
+                    candidates = [slide.source_candidate_builder(address)]
                 else:
                     if sensitivity is None:
                         values = tile.astype(np.float64)
@@ -157,6 +173,14 @@ def run_final_holdout(
                     cell_size_px=cell_size_px,
                     prepared_verifier=prepared_verifier,
                 )
+                if method == "standard":
+                    standard_selected = selected
+                elif method == "denser" and slide.source_candidate_builder is not None:
+                    if standard_selected is None:
+                        raise RuntimeError("source extension requires the standard result first")
+                    selected = choose_smallest_accepted_result(
+                        standard_selected, selected
+                    )
                 encoded_methods.append(
                     (method, selected.packet, selected.breakdown, 0)
                 )
