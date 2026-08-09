@@ -183,6 +183,7 @@ def main() -> int:
     parser.add_argument("--worker-count", type=int, default=2)
     parser.add_argument("--candidate-workers", type=int, default=6)
     parser.add_argument("--use-standard-routing", action="store_true")
+    parser.add_argument("--exclude-missing-scale", action="store_true")
     parser.add_argument("--host-reserve-bytes", type=int, required=True)
     parser.add_argument("--preflight-free-disk-bytes", type=int, required=True)
     arguments = parser.parse_args()
@@ -237,7 +238,7 @@ def main() -> int:
         "results",
         arguments.partition,
         "generation-1",
-        f"feasibility-{arguments.partition}-source-extension-minimal-{arguments.tiles_per_slide}-w{arguments.candidate_workers}-{'route-' + routing_digest[:12] if routing else 'full'}.private.json",
+        f"feasibility-{arguments.partition}-source-extension-minimal-{arguments.tiles_per_slide}-w{arguments.candidate_workers}-{'route-' + routing_digest[:12] if routing else 'full'}-{'scale-filtered' if arguments.exclude_missing_scale else 'strict'}.private.json",
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     identity = {
@@ -251,6 +252,7 @@ def main() -> int:
         "candidate_workers": arguments.candidate_workers,
         "standard_routing_digest": routing_digest,
         "partition": arguments.partition,
+        "exclude_missing_scale": arguments.exclude_missing_scale,
     }
     document: dict[str, object] = {**identity, "samples": []}
     if output.exists():
@@ -271,7 +273,23 @@ def main() -> int:
             row = source.record
             slide = openslide.OpenSlide(str(source.path))
             try:
-                grid = _physical_grid(slide)
+                try:
+                    grid = _physical_grid(slide)
+                except ValueError:
+                    if not arguments.exclude_missing_scale:
+                        raise
+                    exclusions = document.setdefault("metadata_exclusions", [])
+                    if not isinstance(exclusions, list):
+                        raise ValueError("metadata exclusion checkpoint is invalid")
+                    exclusion = {
+                        "slide_index": slide_index,
+                        "reason_code": "physical_scale_metadata_missing",
+                        "outcome_inspected": False,
+                    }
+                    if exclusion not in exclusions:
+                        exclusions.append(exclusion)
+                    _atomic_write(output, document)
+                    continue
                 width, height = slide.dimensions
                 tile_count = math.ceil(width / 512) * math.ceil(height / 512)
                 tiles = _sample_tiles(
@@ -405,6 +423,11 @@ def main() -> int:
         document["projection"] = asdict(projection)
         document["generation_gate"] = asdict(gate)
     document["source_data_processed"] = True
+    document["phase_classification"] = (
+        "not_evaluable"
+        if document.get("metadata_exclusions")
+        else "evaluable"
+    )
     _atomic_write(output, document)
     print(
         json.dumps(
@@ -414,6 +437,7 @@ def main() -> int:
                 "sampled_tiles": len(samples),
                 "gate_passed": gate.passed if gate is not None else None,
                 "failure_codes": gate.failure_codes if gate is not None else (),
+                "phase_classification": document["phase_classification"],
             },
             sort_keys=True,
         )
