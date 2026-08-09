@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from denser.container.mcv1 import McV1CorruptionError, McV1Reader
+from denser.container.mcv2 import McV2CorruptionError, McV2Reader
 from denser.core.canonical import canonical_json_bytes
 
 
@@ -43,20 +44,21 @@ def sha256_tree(root: Path) -> str:
 def run_robustness(config: RobustnessConfig, frozen_results: Path) -> RobustnessReport:
     primary = Path(frozen_results)
     before = sha256_tree(primary)
-    containers = sorted(primary.rglob("*.mcv1"))
+    containers = sorted((*primary.rglob("*.mcv1"), *primary.rglob("*.mcv2")))
     cold: float | None = None
     warm: float | None = None
     corruption: bool | None = None
     output = Path(config.output_root)
     output.mkdir(parents=True, exist_ok=True)
     if containers:
+        reader_type = McV2Reader if containers[0].suffix == ".mcv2" else McV1Reader
         start = time.perf_counter_ns()
-        reader = McV1Reader(containers[0])
+        reader = reader_type(containers[0])
         cold = (time.perf_counter_ns() - start) / 1_000_000
         start = time.perf_counter_ns()
-        McV1Reader(containers[0])
+        reader_type(containers[0])
         warm = (time.perf_counter_ns() - start) / 1_000_000
-        probe = output / "corruption-probe.mcv1"
+        probe = output / f"corruption-probe{containers[0].suffix}"
         shutil.copyfile(containers[0], probe)
         with probe.open("r+b") as stream:
             stream.seek(reader.packet_region_offset)
@@ -64,10 +66,10 @@ def run_robustness(config: RobustnessConfig, frozen_results: Path) -> Robustness
             stream.seek(reader.packet_region_offset)
             stream.write(bytes([byte[0] ^ 1]))
         try:
-            damaged = McV1Reader(probe)
-            first_address = damaged._entries[0].address
+            damaged = reader_type(probe)
+            first_address = damaged.addresses[0]
             damaged.read_tile(first_address)
-        except McV1CorruptionError:
+        except (McV1CorruptionError, McV2CorruptionError):
             corruption = True
         else:
             corruption = False
