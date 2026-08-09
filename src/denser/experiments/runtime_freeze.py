@@ -70,6 +70,39 @@ def _standard_ladders(
     return tuple(values)
 
 
+def require_bound_phase_evidence(
+    result_root: Path,
+    partition: str,
+    *,
+    routing_digest: str,
+    calibration_digest: str,
+) -> dict[str, object]:
+    matches: list[dict[str, object]] = []
+    for path in sorted(Path(result_root).glob("feasibility-*.private.json")):
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            document.get("source_data_processed") is True
+            and document.get("phase_classification") == "evaluable"
+            and document.get("standard_routing_digest") == routing_digest
+            and document.get("calibration_digest") == calibration_digest
+            and document.get("candidate_workers") == 1
+        ):
+            matches.append(document)
+    if not matches:
+        raise ValueError(f"freeze requires bound {partition} evidence")
+    if partition == "development":
+        passing = [
+            document
+            for document in matches
+            if isinstance(document.get("generation_gate"), dict)
+            and document["generation_gate"].get("passed") is True  # type: ignore[union-attr]
+        ]
+        if not passing:
+            raise ValueError("freeze requires a passing development gate")
+        return passing[-1]
+    return matches[-1]
+
+
 def runtime_freeze_paths(repo_root: Path) -> tuple[Path, ...]:
     repo = Path(repo_root)
     paths = list((repo / "src" / "denser").rglob("*.py"))
@@ -131,13 +164,45 @@ def build_runtime_freeze_context(
         raise ValueError("calibration generation does not match freeze generation")
     if calibration.get("harmful_control_audit", {}).get("status") != "calibrated":
         raise ValueError("freeze requires a passing harmful-control calibration")
+    routing_digest = hashlib.sha256(routing_path.read_bytes()).hexdigest()
+    calibration_digest = str(calibration["calibration"]["sha256"])
     for partition in ("development", "pilot", "tuning"):
-        result_root = layout.resolve("results", partition, f"generation-{generation}")
-        matches = list(result_root.glob("feasibility-*.private.json"))
-        if not matches:
-            raise ValueError(f"freeze requires completed {partition} feasibility evidence")
-        if not any(json.loads(path.read_text(encoding="utf-8")).get("source_data_processed") for path in matches):
-            raise ValueError(f"freeze requires source-processed {partition} evidence")
+        require_bound_phase_evidence(
+            layout.resolve("results", partition, f"generation-{generation}"),
+            partition,
+            routing_digest=routing_digest,
+            calibration_digest=calibration_digest,
+        )
+    fairness_path = layout.resolve(
+        "results",
+        "development",
+        f"generation-{generation}",
+        f"standard-routing-fairness-{routing_digest[:12]}.private.json",
+    )
+    fairness = json.loads(fairness_path.read_text(encoding="utf-8"))
+    if (
+        fairness.get("passed") is not True
+        or fairness.get("routing_digest") != routing_digest
+        or int(fairness.get("development_tiles", 0)) < 48
+    ):
+        raise ValueError("freeze requires passing bound standard-route fairness evidence")
+    scaling = json.loads(
+        layout.resolve(
+            "results",
+            "development",
+            f"generation-{generation}",
+            "parallel-scaling-w6.private.json",
+        ).read_text(encoding="utf-8")
+    )
+    if (
+        scaling.get("routing_digest") != routing_digest
+        or scaling.get("calibration_digest") != calibration_digest
+        or scaling.get("candidate_workers") != 1
+        or scaling.get("packets_equal") is not True
+        or scaling.get("source_data_processed") is not True
+        or set(scaling.get("project_parallel_effective_tile_seconds", {})) != projects
+    ):
+        raise ValueError("freeze requires bound deterministic project scaling evidence")
     config_paths = [path for path in (repo / "configs").rglob("*.json")]
     configuration_records = [
         _tree_digest(repo, config_paths),

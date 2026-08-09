@@ -231,7 +231,7 @@ def test_partition_downloader_bounds_distinct_file_concurrency(tmp_path: Path) -
         manifest,
         layout,
         "development",
-        max_concurrent_files=2,
+        max_concurrent_files=4,
         download_fn=concurrent_download,
     )
     assert len(result) == 2

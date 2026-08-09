@@ -159,8 +159,8 @@ def download_manifest_partition(
         raise ValueError("unknown cohort partition")
     if max_attempts_per_file <= 0:
         raise ValueError("max_attempts_per_file must be positive")
-    if max_concurrent_files not in (1, 2):
-        raise ValueError("private download concurrency must be one or two files")
+    if not 1 <= max_concurrent_files <= 4:
+        raise ValueError("private download concurrency must be between one and four files")
     layout.ensure()
     manifest = Path(manifest_path).resolve(strict=True)
     if not manifest.is_relative_to(layout.resolve("manifests")):
