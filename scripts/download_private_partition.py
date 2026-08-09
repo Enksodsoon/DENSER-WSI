@@ -15,7 +15,7 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--partition", choices=("development", "pilot", "tuning", "final"), required=True)
     parser.add_argument("--max-files", type=int)
-    parser.add_argument("--max-concurrent-files", type=int, choices=(1, 2, 3, 4), default=4)
+    parser.add_argument("--max-concurrent-files", type=int, choices=range(1, 7), default=6)
     parser.add_argument("--generation", type=int, default=1)
     arguments = parser.parse_args()
     layout = RunLayout(arguments.repo_root, arguments.run_root)
