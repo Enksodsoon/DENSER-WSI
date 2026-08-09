@@ -11,6 +11,16 @@ from denser.wsi.metadata import MetadataError
 from denser.wsi.remote_metadata import probe_remote_tiff_mpp
 
 
+def scale_preflight_output(
+    layout: RunLayout, partition: str, *, generation: int
+) -> Path:
+    if generation <= 0:
+        raise ValueError("scale preflight generation must be positive")
+    return layout.resolve(
+        "results", partition, f"generation-{generation}", "scale-preflight.private.json"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Header-only private partition physical-scale preflight"
@@ -18,6 +28,7 @@ def main() -> int:
     parser.add_argument("--repo-root", type=Path, required=True)
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--generation", type=int, required=True)
     parser.add_argument(
         "--partition", choices=("development", "pilot", "tuning", "final"), required=True
     )
@@ -80,8 +91,8 @@ def main() -> int:
         "compression_outcomes_inspected": False,
         "rows": rows,
     }
-    output = layout.resolve(
-        "results", arguments.partition, "generation-1", "scale-preflight.private.json"
+    output = scale_preflight_output(
+        layout, arguments.partition, generation=arguments.generation
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(canonical_json_bytes(report) + b"\n")
