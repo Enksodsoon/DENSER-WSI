@@ -70,6 +70,21 @@ def _standard_ladders(
     return tuple(values)
 
 
+def runtime_freeze_paths(repo_root: Path) -> tuple[Path, ...]:
+    repo = Path(repo_root)
+    paths = list((repo / "src" / "denser").rglob("*.py"))
+    paths.extend(
+        path
+        for path in (
+            repo / "scripts" / "run_private_final.py",
+            repo / "scripts" / "analyze_private_final.py",
+            repo / "scripts" / "create_private_freeze.py",
+        )
+        if path.exists()
+    )
+    return tuple(sorted(paths))
+
+
 def build_runtime_freeze_context(
     repo_root: Path,
     run_root: Path,
@@ -143,15 +158,7 @@ def build_runtime_freeze_context(
         ),
     }
     evidence_paths = [path for path in (repo / "src" / "denser" / "evidence").rglob("*.py")]
-    runtime_paths = [path for path in (repo / "src" / "denser").rglob("*.py")]
-    runtime_paths.extend(
-        path
-        for path in (
-            repo / "scripts" / "run_private_final.py",
-            repo / "scripts" / "create_private_freeze.py",
-        )
-        if path.exists()
-    )
+    runtime_paths = list(runtime_freeze_paths(repo))
     thresholds = calibration["calibration"].get("thresholds")
     if not isinstance(thresholds, list):
         raise ValueError("calibration thresholds are invalid")
