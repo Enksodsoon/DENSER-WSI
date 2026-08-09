@@ -176,6 +176,9 @@ def main() -> int:
     parser.add_argument("--image-digest", required=True)
     parser.add_argument("--code-commit", required=True)
     parser.add_argument("--tiles-per-slide", type=int, default=8)
+    parser.add_argument(
+        "--partition", choices=("development", "pilot", "tuning"), default="development"
+    )
     parser.add_argument("--seed", type=int, default=20260808)
     parser.add_argument("--worker-count", type=int, default=2)
     parser.add_argument("--candidate-workers", type=int, default=6)
@@ -213,12 +216,12 @@ def main() -> int:
         layout.resolve("manifests", "selected-sources.private.json").read_text(encoding="utf-8")
     )
     final_rows = [row for row in manifest["rows"] if row["partition"] == "final"]
-    if len(final_rows) < 18:
+    if arguments.partition == "development" and len(final_rows) < 18:
         raise RuntimeError("reduced development and final cohorts are incomplete")
-    development_sources = bind_verified_partition_sources(
+    partition_sources = bind_verified_partition_sources(
         layout.resolve("manifests", "selected-sources.private.json"),
         layout,
-        "development",
+        arguments.partition,
         expected_count=6,
     )
     calibration_document = json.loads(
@@ -232,9 +235,9 @@ def main() -> int:
     contract = acceptance_contract_from_calibration(calibration)
     output = layout.resolve(
         "results",
-        "development",
+        arguments.partition,
         "generation-1",
-        f"feasibility-source-extension-minimal-{arguments.tiles_per_slide}-w{arguments.candidate_workers}-{'route-' + routing_digest[:12] if routing else 'full'}.private.json",
+        f"feasibility-{arguments.partition}-source-extension-minimal-{arguments.tiles_per_slide}-w{arguments.candidate_workers}-{'route-' + routing_digest[:12] if routing else 'full'}.private.json",
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     identity = {
@@ -247,6 +250,7 @@ def main() -> int:
         "tiles_per_slide": arguments.tiles_per_slide,
         "candidate_workers": arguments.candidate_workers,
         "standard_routing_digest": routing_digest,
+        "partition": arguments.partition,
     }
     document: dict[str, object] = {**identity, "samples": []}
     if output.exists():
@@ -263,7 +267,7 @@ def main() -> int:
     import openslide
 
     with _PeakContainerRss() as memory:
-        for slide_index, source in enumerate(development_sources):
+        for slide_index, source in enumerate(partition_sources):
             row = source.record
             slide = openslide.OpenSlide(str(source.path))
             try:
@@ -365,7 +369,7 @@ def main() -> int:
             finally:
                 slide.close()
     timing_samples = []
-    for slide_index, source in enumerate(development_sources):
+    for slide_index, source in enumerate(partition_sources):
         slide_rows = [sample for sample in samples if int(sample["slide_index"]) == slide_index]
         if not slide_rows:
             continue
@@ -379,39 +383,42 @@ def main() -> int:
                 tuple(float(sample["tile_pipeline_seconds"]) for sample in slide_rows),
             )
         )
-    projection = project_confirmatory_runtime(
-        timing_samples,
-        final_source_bytes=sum(int(row["file_size"]) for row in final_rows),
-        worker_count=arguments.worker_count,
-    )
     free_disk = os.statvfs(arguments.run_root).f_bavail * os.statvfs(arguments.run_root).f_frsize
-    gate = evaluate_generation_gate(
-        FeasibilityEvidence(
-            projection.projected_confirmatory_seconds,
-            int(document["peak_container_rss_bytes"]),
-            arguments.host_reserve_bytes,
-            free_disk,
-            arguments.preflight_free_disk_bytes,
-            len(final_rows),
-            4,
+    gate = None
+    if arguments.partition == "development":
+        projection = project_confirmatory_runtime(
+            timing_samples,
+            final_source_bytes=sum(int(row["file_size"]) for row in final_rows),
+            worker_count=arguments.worker_count,
         )
-    )
-    document["projection"] = asdict(projection)
-    document["generation_gate"] = asdict(gate)
+        gate = evaluate_generation_gate(
+            FeasibilityEvidence(
+                projection.projected_confirmatory_seconds,
+                int(document["peak_container_rss_bytes"]),
+                arguments.host_reserve_bytes,
+                free_disk,
+                arguments.preflight_free_disk_bytes,
+                len(final_rows),
+                4,
+            )
+        )
+        document["projection"] = asdict(projection)
+        document["generation_gate"] = asdict(gate)
     document["source_data_processed"] = True
     _atomic_write(output, document)
     print(
         json.dumps(
             {
-                "development_slides": len(timing_samples),
+                "sampled_slides": len(timing_samples),
+                "partition": arguments.partition,
                 "sampled_tiles": len(samples),
-                "gate_passed": gate.passed,
-                "failure_codes": gate.failure_codes,
+                "gate_passed": gate.passed if gate is not None else None,
+                "failure_codes": gate.failure_codes if gate is not None else (),
             },
             sort_keys=True,
         )
     )
-    return 0 if gate.passed else 2
+    return 0 if gate is None or gate.passed else 2
 
 
 if __name__ == "__main__":
