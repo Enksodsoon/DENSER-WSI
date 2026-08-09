@@ -8,6 +8,7 @@ from denser.core.canonical import canonical_json_bytes
 from denser.experiments.standard_routing import (
     derive_bounded_development_winner_routes,
     derive_development_winner_routes,
+    derive_selectively_bounded_development_winner_routes,
 )
 from denser.governance.run_layout import RunLayout
 
@@ -21,7 +22,21 @@ def main() -> int:
     parser.add_argument("--generation", type=int, required=True)
     parser.add_argument("--full-ladder-report", type=Path, required=True)
     parser.add_argument("--max-profiles", type=int)
+    parser.add_argument(
+        "--project-profile-limit",
+        action="append",
+        default=[],
+        metavar="PROJECT=COUNT",
+    )
     arguments = parser.parse_args()
+    if arguments.max_profiles is not None and arguments.project_profile_limit:
+        raise ValueError("global and selective profile limits are mutually exclusive")
+    project_limits: dict[str, int] = {}
+    for value in arguments.project_profile_limit:
+        project, separator, count = value.partition("=")
+        if not separator or not project or project in project_limits:
+            raise ValueError("project profile limits must be unique PROJECT=COUNT values")
+        project_limits[project] = int(count)
     layout = RunLayout(arguments.repo_root, arguments.run_root)
     report_path = arguments.full_ladder_report.resolve()
     try:
@@ -32,6 +47,9 @@ def main() -> int:
         raise ValueError("full-ladder report does not exist")
     report = json.loads(report_path.read_text(encoding="utf-8"))
     routing = (
+        derive_selectively_bounded_development_winner_routes(report, project_limits)
+        if project_limits
+        else
         derive_bounded_development_winner_routes(
             report, max_profiles=arguments.max_profiles
         )

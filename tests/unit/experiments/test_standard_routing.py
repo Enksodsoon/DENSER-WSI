@@ -5,6 +5,8 @@ import pytest
 from denser.experiments.standard_routing import (
     derive_bounded_development_winner_routes,
     derive_development_winner_routes,
+    derive_selectively_bounded_development_winner_routes,
+    evaluate_development_route_fairness,
 )
 
 
@@ -21,6 +23,8 @@ def _report() -> dict[str, object]:
             samples.append(
                 {
                     "project": project,
+                    "slide_index": project_index,
+                    "tile_index": tile_index,
                     "standard": {"candidate_count": 12, "profile": profile},
                 }
             )
@@ -63,3 +67,37 @@ def test_bounded_routes_choose_most_frequent_winners_deterministically() -> None
     assert all(profiles == ["jpeg2000-r4"] for profiles in routing["routes"].values())
     with pytest.raises(ValueError, match="positive profile limit"):
         derive_bounded_development_winner_routes(_report(), max_profiles=0)
+
+
+def test_selective_limits_preserve_unlisted_project_winner_unions() -> None:
+    routing = derive_selectively_bounded_development_winner_routes(
+        _report(), {"PROJECT-0": 1}
+    )
+    assert routing["selection_rule"] == "development-project-selective-win-frequency-v1"
+    assert routing["project_profile_limits"] == {"PROJECT-0": 1}
+    assert routing["routes"]["PROJECT-0"] == ["jpeg2000-r4"]
+    assert routing["routes"]["PROJECT-1"] == ["avif-q90-s6", "jpeg2000-r4"]
+    with pytest.raises(ValueError, match="unknown project"):
+        derive_selectively_bounded_development_winner_routes(
+            _report(), {"PROJECT-unknown": 1}
+        )
+
+
+def test_route_fairness_gate_rejects_material_tail_inflation() -> None:
+    full = _report()
+    routed = _report()
+    routed["standard_routing_digest"] = "bounded-route"
+    for row in full["samples"]:
+        row["standard"]["complete_bytes"] = 100
+    for row in routed["samples"]:
+        row["standard"]["complete_bytes"] = 100
+    routed["samples"][0]["standard"]["complete_bytes"] = 112
+    evidence = evaluate_development_route_fairness(full, routed)
+    assert evidence["passed"] is False
+    assert evidence["failure_codes"] == ["maximum_complete_byte_ratio_exceeded"]
+    assert evidence["exact_fraction"] == pytest.approx(47 / 48)
+
+    routed["samples"][0]["standard"]["complete_bytes"] = 108
+    evidence = evaluate_development_route_fairness(full, routed)
+    assert evidence["passed"] is True
+    assert evidence["maximum_complete_byte_ratio"] == pytest.approx(1.08)
