@@ -80,6 +80,21 @@ def test_final_encodes_every_level0_tile_once(tmp_path: Path) -> None:
     assert result.random_tiles_independently_decodable
     assert maximum_readers == 2
     assert total_reads == len(expected)
+    resumed = run_final_holdout(
+        FinalHoldoutConfig(
+            tmp_path,
+            (slide,),
+            context,
+            cpu_workers=2,
+            standard_builder=lossless_standard,
+            quadtree_builder=no_quadtree,
+        ),
+        manifest,
+        create_freeze_record(context),
+    )
+    assert total_reads == len(expected)
+    assert resumed.ledgers_match_files
+    assert resumed.random_tiles_independently_decodable
 
 
 def test_final_forbids_sample_extrapolation(tmp_path: Path) -> None:

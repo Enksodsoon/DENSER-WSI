@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +17,7 @@ from denser.codecs.registry import CodecRegistry, build_default_registry
 from denser.codecs.quadtree import build_jpeg_quadtree_candidates
 from denser.codecs.standard import StandardLadder, build_standard_candidates
 from denser.container.mcv2 import McV2Reader, McV2Writer
+from denser.core.canonical import canonical_json_bytes
 from denser.core.errors import PartitionViolation
 from denser.core.models import TileAddress
 from denser.data.manifest import PartitionManifest
@@ -54,6 +59,7 @@ class FinalHoldoutConfig:
     quadtree_builder: Callable[[np.ndarray, np.ndarray], list[EncodedCandidate]] = build_jpeg_quadtree_candidates
     codec_registry: CodecRegistry | None = None
     acceptance_contract: AcceptanceContract = AcceptanceContract()
+    checkpoint_interval_tiles: int = 96
 
     def __post_init__(self) -> None:
         if self.sampled_tile_extrapolation_for_primary_endpoint_allowed:
@@ -69,6 +75,8 @@ class FinalHoldoutConfig:
             raise ValueError("source-extension final method requires a bound candidate builder")
         if not 1 <= self.cpu_workers <= 6:
             raise ValueError("final CPU workers must be between one and six")
+        if self.checkpoint_interval_tiles <= 0:
+            raise ValueError("final checkpoint interval must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +103,62 @@ def iter_level0_grid(width: int, height: int, tile_size: int) -> Iterator[TileAd
     for x in range(0, width, tile_size):
         for y in range(0, height, tile_size):
             yield TileAddress(0, x, y, min(tile_size, width - x), min(tile_size, height - y))
+
+
+def _atomic_json(path: Path, document: dict[str, object]) -> None:
+    payload = canonical_json_bytes(document) + b"\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _progress_document(
+    freeze: FreezeRecord, research_id: str, completed_tiles: int
+) -> dict[str, object]:
+    unsigned = {
+        "version": "DENSER-final-slide-progress-1",
+        "freeze_digest": freeze.freeze_digest,
+        "research_id": research_id,
+        "completed_tiles": completed_tiles,
+    }
+    return {**unsigned, "sha256": hashlib.sha256(canonical_json_bytes(unsigned)).hexdigest()}
+
+
+def _load_progress(
+    path: Path, freeze: FreezeRecord, research_id: str
+) -> int:
+    if not path.exists():
+        return 0
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        digest = document.pop("sha256")
+    except (OSError, KeyError, json.JSONDecodeError) as error:
+        raise RuntimeError("final slide progress checkpoint is invalid") from error
+    if (
+        digest != hashlib.sha256(canonical_json_bytes(document)).hexdigest()
+        or document.get("version") != "DENSER-final-slide-progress-1"
+        or document.get("freeze_digest") != freeze.freeze_digest
+        or document.get("research_id") != research_id
+        or not isinstance(document.get("completed_tiles"), int)
+    ):
+        raise RuntimeError("final slide progress checkpoint identity is invalid")
+    return int(document["completed_tiles"])
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while block := stream.read(1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def run_final_holdout(
@@ -128,7 +192,14 @@ def run_final_holdout(
             method: root / f"final-{slide_number:03d}.{method}.mcv2"
             for method in config.methods
         }
-        writers = {method: McV2Writer(path) for method, path in paths.items()}
+        progress_path = root / f".final-{slide_number:03d}.progress.json"
+        completion_path = root / f"final-{slide_number:03d}.complete.json"
+        existing = {method for method, path in paths.items() if path.exists()}
+        if existing and existing != set(config.methods):
+            raise RuntimeError("final slide has a partially finalized method set")
+        if completion_path.exists() != bool(existing):
+            raise RuntimeError("final slide completion marker and containers disagree")
+        writers: dict[str, McV2Writer] = {}
 
         def encode_address(address: TileAddress):  # type: ignore[no-untyped-def]
             tile = np.asarray(slide.read_tile(address))
@@ -186,28 +257,102 @@ def run_final_holdout(
                 )
             return address, encoded_methods
 
+        if not existing:
+            writers = {
+                method: McV2Writer(
+                    path,
+                    resume_token=f"{freeze.freeze_digest}:{slide.research_id}:{method}",
+                )
+                for method, path in paths.items()
+            }
+            shared_count = _load_progress(progress_path, freeze, slide.research_id)
+            if not 0 <= shared_count <= len(addresses):
+                raise RuntimeError("final slide progress count is outside the tile grid")
+            for writer in writers.values():
+                checkpointed = writer.checkpointed_addresses
+                if len(checkpointed) < shared_count or checkpointed[:shared_count] != addresses[:shared_count]:
+                    raise RuntimeError("final slide writer disagrees with shared progress")
+                writer.rollback_to_checkpoint(shared_count)
+            try:
+                tile_workers = min(3, config.cpu_workers)
+                last_checkpoint = shared_count
+                with ThreadPoolExecutor(max_workers=tile_workers) as pool:
+                    for start in range(shared_count, len(addresses), tile_workers):
+                        encoded = pool.map(
+                            encode_address, addresses[start : start + tile_workers]
+                        )
+                        for address, encoded_methods in encoded:
+                            for method, packet, breakdown, violation in encoded_methods:
+                                writers[method].add_tile(address, packet, breakdown)
+                                unresolved += violation
+                        completed = min(start + tile_workers, len(addresses))
+                        if (
+                            completed == len(addresses)
+                            or completed - last_checkpoint >= config.checkpoint_interval_tiles
+                        ):
+                            for writer in writers.values():
+                                writer.checkpoint()
+                            _atomic_json(
+                                progress_path,
+                                _progress_document(
+                                    freeze, slide.research_id, completed
+                                ),
+                            )
+                            last_checkpoint = completed
+                for writer in writers.values():
+                    writer.finalize()
+            except Exception:
+                for writer in writers.values():
+                    writer.suspend()
+                raise
+            marker_unsigned: dict[str, object] = {
+                "version": "DENSER-final-slide-completion-1",
+                "freeze_digest": freeze.freeze_digest,
+                "research_id": slide.research_id,
+                "tile_count": len(addresses),
+                "containers": {
+                    method: {
+                        "sha256": _file_sha256(path),
+                        "complete_bytes": path.stat().st_size,
+                    }
+                    for method, path in paths.items()
+                },
+            }
+            _atomic_json(
+                completion_path,
+                {
+                    **marker_unsigned,
+                    "sha256": hashlib.sha256(
+                        canonical_json_bytes(marker_unsigned)
+                    ).hexdigest(),
+                },
+            )
+            progress_path.unlink(missing_ok=True)
         try:
-            tile_workers = min(3, config.cpu_workers)
-            with ThreadPoolExecutor(max_workers=tile_workers) as pool:
-                for start in range(0, len(addresses), tile_workers):
-                    encoded = pool.map(
-                        encode_address, addresses[start : start + tile_workers]
-                    )
-                    for address, encoded_methods in encoded:
-                        for method, packet, breakdown, violation in encoded_methods:
-                            writers[method].add_tile(address, packet, breakdown)
-                            key = (slide.research_id, method, address)
-                            counts[key] = counts.get(key, 0) + 1
-                            unresolved += violation
-                        encoded_addresses.add(address)
-            for writer in writers.values():
-                writer.finalize()
-        except Exception:
-            for writer in writers.values():
-                writer.abort()
-            raise
+            completion = json.loads(completion_path.read_text(encoding="utf-8"))
+            completion_digest = completion.pop("sha256")
+        except (OSError, KeyError, json.JSONDecodeError) as error:
+            raise RuntimeError("final slide completion marker is invalid") from error
+        if (
+            completion_digest
+            != hashlib.sha256(canonical_json_bytes(completion)).hexdigest()
+            or completion.get("version") != "DENSER-final-slide-completion-1"
+            or completion.get("freeze_digest") != freeze.freeze_digest
+            or completion.get("research_id") != slide.research_id
+            or completion.get("tile_count") != len(addresses)
+            or set(completion.get("containers", {})) != set(config.methods)
+        ):
+            raise RuntimeError("final slide completion marker identity is invalid")
         for method, path in paths.items():
+            marker_container = completion["containers"][method]
+            if (
+                marker_container.get("sha256") != _file_sha256(path)
+                or marker_container.get("complete_bytes") != path.stat().st_size
+            ):
+                raise RuntimeError("final slide container differs from completion marker")
             reader = McV2Reader(path)
+            if reader.addresses != addresses:
+                raise RuntimeError("final slide container does not cover the exact level-0 grid")
             ledger = reader.byte_ledger()
             ledgers_match &= ledger.complete_bytes == path.stat().st_size
             for address in (addresses[0], addresses[-1]):
@@ -221,6 +366,9 @@ def run_final_holdout(
             containers.append(
                 FinalContainerResult(method, path, ledger.complete_bytes, len(addresses))
             )
+            for address in addresses:
+                counts[(slide.research_id, method, address)] = 1
+        encoded_addresses.update(addresses)
     return FinalHoldoutResult(
         encoded_addresses,
         counts,

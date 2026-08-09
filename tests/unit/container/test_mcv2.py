@@ -24,6 +24,57 @@ def test_mcv2_random_tile_round_trip_and_exact_ledger(tmp_path: Path) -> None:
     assert reader.byte_ledger().complete_bytes == path.stat().st_size
 
 
+def test_mcv2_resumes_from_fsynced_tile_journal_and_truncates_uncommitted_bytes(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "resume.mcv2"
+    first = TileAddress(0, 0, 0, 8, 8)
+    second = TileAddress(0, 0, 8, 8, 8)
+    writer = McV2Writer(path, resume_token="frozen-slide-standard")
+    writer.add_tile(first, b"abc", ByteBreakdown(payload=3))
+    writer.suspend()
+    temporary = path.with_name(f".{path.name}.building")
+    with temporary.open("ab") as stream:
+        stream.write(b"uncommitted-after-crash")
+
+    resumed = McV2Writer(path, resume_token="frozen-slide-standard")
+    assert resumed.checkpointed_addresses == (first,)
+    resumed.add_tile(second, b"defg", ByteBreakdown(payload=4))
+    resumed.finalize()
+
+    reader = McV2Reader(path)
+    assert reader.addresses == (first, second)
+    assert reader.read_tile(first) == b"abc"
+    assert reader.read_tile(second) == b"defg"
+
+
+def test_mcv2_resume_rejects_different_freeze_identity(tmp_path: Path) -> None:
+    path = tmp_path / "identity.mcv2"
+    writer = McV2Writer(path, resume_token="freeze-a")
+    writer.add_tile(TileAddress(0, 0, 0, 8, 8), b"abc", ByteBreakdown(payload=3))
+    writer.suspend()
+    with pytest.raises(McV2CorruptionError, match="resume identity"):
+        McV2Writer(path, resume_token="freeze-b")
+
+
+def test_mcv2_can_roll_back_to_shared_multiwriter_checkpoint(tmp_path: Path) -> None:
+    path = tmp_path / "rollback.mcv2"
+    addresses = (
+        TileAddress(0, 0, 0, 8, 8),
+        TileAddress(0, 0, 8, 8, 8),
+    )
+    writer = McV2Writer(path, resume_token="shared")
+    for address in addresses:
+        writer.add_tile(address, b"abc", ByteBreakdown(payload=3))
+        writer.checkpoint()
+    writer.rollback_to_checkpoint(1)
+    writer.suspend()
+    resumed = McV2Writer(path, resume_token="shared")
+    assert resumed.checkpointed_addresses == addresses[:1]
+    resumed.finalize()
+    assert McV2Reader(path).addresses == addresses[:1]
+
+
 @pytest.mark.parametrize("region", ["header", "packet", "index", "integrity", "truncate"])
 def test_mcv2_fails_closed_for_every_structural_region(tmp_path: Path, region: str) -> None:
     path = _write(tmp_path / f"{region}.mcv2")
@@ -50,4 +101,3 @@ def test_mcv2_fails_closed_for_every_structural_region(tmp_path: Path, region: s
     else:
         with pytest.raises(McV2CorruptionError):
             McV2Reader(path)
-
