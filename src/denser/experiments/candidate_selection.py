@@ -22,8 +22,7 @@ from denser.evidence.localized import (
     LocalizedAcceptanceVerifier,
     PreparedLocalizedAcceptanceVerifier,
 )
-from denser.evidence.architecture import compute_acceptance_evidence
-from denser.evidence.types import AcceptanceContract, AcceptanceEvidence, PhysicalGrid
+from denser.evidence.types import AcceptanceContract, PhysicalGrid
 from denser.repair.escalate import repair_until_verified
 from denser.repair.packet_v2 import apply_repair_packet
 
@@ -63,13 +62,9 @@ def _packet_for(
     grid: PhysicalGrid,
     *,
     fallback: bool,
-    reference_evidence: AcceptanceEvidence,
+    prepared_verifier: PreparedLocalizedAcceptanceVerifier,
 ) -> tuple[bytes, ByteBreakdown]:
-    decoded_evidence = (
-        reference_evidence
-        if np.array_equal(source, decoded)
-        else compute_acceptance_evidence(decoded, grid, contract)
-    )
+    decoded_evidence = prepared_verifier.evidence_for(decoded)
     certificate = build_certificate(
         source,
         candidate,
@@ -77,7 +72,7 @@ def _packet_for(
         physical_grid=grid,
         decoded_rgb=decoded,
         repair_payload=repair_payload,
-        reference_evidence=reference_evidence,
+        reference_evidence=prepared_verifier.reference_evidence,
         decoded_evidence=decoded_evidence,
     )
     if not verify_encoder_certificate_with_evidence(
@@ -140,7 +135,7 @@ def select_smallest_accepted_candidate(
         contract,
         grid,
         fallback=True,
-        reference_evidence=prepared_verifier.reference_evidence,
+        prepared_verifier=prepared_verifier,
     )
     best_complete_bytes = len(fallback_packet)
     fallback_identity_bytes = len(
@@ -219,7 +214,7 @@ def select_smallest_accepted_candidate(
             contract,
             grid,
             fallback=False,
-            reference_evidence=prepared_verifier.reference_evidence,
+            prepared_verifier=prepared_verifier,
         )
         return AcceptedTileCandidate(
             candidate, decoded, repair_payload, packet, breakdown, status, ()

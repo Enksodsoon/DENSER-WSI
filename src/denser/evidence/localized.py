@@ -69,10 +69,30 @@ class PreparedLocalizedAcceptanceVerifier:
     ] = field(
         default_factory=dict
     )
+    _candidate_evidence: dict[str, AcceptanceEvidence] = field(default_factory=dict)
 
     @property
     def reference_evidence(self) -> AcceptanceEvidence:
         return self._reference
+
+    def evidence_for(self, decoded: np.ndarray) -> AcceptanceEvidence:
+        candidate = np.asarray(decoded)
+        if (
+            candidate.dtype != np.uint8
+            or candidate.ndim != 3
+            or candidate.shape != self._source.shape
+        ):
+            raise ValueError("candidate evidence requires source-shaped uint8 RGB pixels")
+        digest = hashlib.sha256(candidate.tobytes(order="C")).hexdigest()
+        if digest == self._source_sha256:
+            return self._reference
+        evidence = self._candidate_evidence.get(digest)
+        if evidence is None:
+            evidence = compute_acceptance_evidence(
+                candidate, self.physical_grid, self.contract
+            )
+            self._candidate_evidence[digest] = evidence
+        return evidence
 
     def prepare_cells(self) -> PreparedLocalizedAcceptanceVerifier:
         acceptance_groups = tuple(name for name, _values in self._reference.groups)
@@ -115,9 +135,7 @@ class PreparedLocalizedAcceptanceVerifier:
             original.tobytes(order="C")
         ).hexdigest() != self._source_sha256:
             raise ValueError("prepared verifier source does not match bound source")
-        candidate_evidence = compute_acceptance_evidence(
-            candidate, self.physical_grid, self.contract
-        )
+        candidate_evidence = self.evidence_for(candidate)
         comparison = compare_evidence(self._reference, candidate_evidence, self.contract)
         self.prepare_cells()
         acceptance_groups = tuple(name for name, _values in self._reference.groups)
@@ -242,9 +260,7 @@ class PreparedLocalizedAcceptanceVerifier:
             and changed_bounds != exact_source_bounds
         ):
             return self.verify(original, candidate)
-        candidate_evidence = compute_acceptance_evidence(
-            candidate, self.physical_grid, self.contract
-        )
+        candidate_evidence = self.evidence_for(candidate)
         comparison = compare_evidence(self._reference, candidate_evidence, self.contract)
         self.prepare_cells()
         acceptance_groups = tuple(name for name, _values in self._reference.groups)

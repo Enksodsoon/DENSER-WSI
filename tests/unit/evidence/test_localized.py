@@ -103,3 +103,22 @@ def test_incremental_verification_skips_cells_restored_exactly_to_source(monkeyp
     result = verifier.verify_changed(source, repaired, initial, changed)
     assert result.passed
     assert result.failures == ()
+
+
+def test_prepared_verifier_reuses_candidate_evidence_after_verification(
+    monkeypatch,
+) -> None:
+    source = np.full((16, 16, 3), 180, dtype=np.uint8)
+    decoded = source.copy()
+    decoded[:8, :8] = 170
+    prepared = LocalizedAcceptanceVerifier(AcceptanceContract(), 8).prepare(source)
+    prepared.verify(source, decoded)
+
+    def unexpected(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("verified candidate evidence must be cached")
+
+    monkeypatch.setattr(
+        "denser.evidence.localized.compute_acceptance_evidence", unexpected
+    )
+    evidence = prepared.evidence_for(decoded)
+    assert evidence.version == prepared.contract.version

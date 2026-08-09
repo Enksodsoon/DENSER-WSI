@@ -11,7 +11,7 @@ from denser.codecs.registry import CodecRegistry
 from denser.container.packet_v2 import HEADER as TILE_PACKET_HEADER
 from denser.container.packet_v2 import McV2TilePacket
 from denser.core.models import ByteBreakdown
-from denser.evidence.localized import LocalizedAcceptanceVerifier
+from denser.evidence.localized import LocalizedAcceptanceResult, LocalizedAcceptanceVerifier
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
 from denser.experiments.candidate_selection import (
     choose_smallest_accepted_result,
@@ -220,6 +220,47 @@ def test_selection_reuses_prepared_evidence_for_certificate_builds(monkeypatch) 
     assert evidence_arguments
     assert all(reference is prepared.reference_evidence for reference, _ in evidence_arguments)
     assert all(decoded is prepared.reference_evidence for _, decoded in evidence_arguments)
+
+
+def test_selection_reuses_verified_lossy_evidence_for_certificate(monkeypatch) -> None:
+    source = np.full((16, 16, 3), 120, dtype=np.uint8)
+    decoded = source.copy()
+    decoded[0, 0, 0] = 121
+    contract = AcceptanceContract(
+        nuclear_relative_tolerance=1e9,
+        architecture_relative_tolerance=1e9,
+        sentinel_relative_tolerance=1e9,
+        visual_relative_tolerance=1e9,
+    )
+    grid = PhysicalGrid(0.25, 0.25)
+    prepared = LocalizedAcceptanceVerifier(contract, 8, grid).prepare(source)
+    evidence_calls = 0
+    real_evidence_for = type(prepared).evidence_for
+
+    def counted(self, pixels):  # type: ignore[no-untyped-def]
+        nonlocal evidence_calls
+        evidence_calls += 1
+        return real_evidence_for(self, pixels)
+
+    monkeypatch.setattr(type(prepared), "evidence_for", counted)
+
+    def accepted(self, original, pixels):  # type: ignore[no-untyped-def]
+        self.evidence_for(pixels)
+        return LocalizedAcceptanceResult(True, ())
+
+    monkeypatch.setattr(type(prepared), "verify", accepted)
+    registry = CodecRegistry()
+    registry.register("fixture", lambda payload, allocation, shape, profile: decoded.copy())
+    select_smallest_accepted_candidate(
+        source,
+        [_candidate("lossy", b"x")],
+        registry,
+        contract,
+        grid,
+        cell_size_px=8,
+        prepared_verifier=prepared,
+    )
+    assert evidence_calls >= 3
 
 
 def test_standard_portfolio_uses_frozen_jpeg90_as_initial_byte_bound() -> None:
