@@ -78,3 +78,26 @@ def test_certificate_binds_allocation_payload_and_repair_bytes() -> None:
         candidate.allocation_map + candidate.payload + repair
     ).hexdigest()
     assert certificate.repair_region_hex == hashlib.sha256(repair).hexdigest()
+
+
+def test_precomputed_evidence_produces_identical_certificate_and_verification() -> None:
+    source = source_rgb()
+    candidate = accepted_candidate()
+    decoded = decode_candidate(candidate.payload, candidate.allocation_map)
+    grid = PhysicalGrid(0.25, 0.25)
+    reference = compute_acceptance_evidence(source, grid, contract())
+    decoded_evidence = compute_acceptance_evidence(decoded, grid, contract())
+    baseline = build_certificate(
+        source, candidate, contract(), physical_grid=grid, decoded_rgb=decoded
+    )
+    reused = build_certificate(
+        source,
+        candidate,
+        contract(),
+        physical_grid=grid,
+        decoded_rgb=decoded,
+        reference_evidence=reference,
+        decoded_evidence=decoded_evidence,
+    )
+    assert reused == baseline
+    assert verify_certificate(decoded, reused, contract()).passed

@@ -19,7 +19,8 @@ from denser.evidence.localized import (
     LocalizedAcceptanceVerifier,
     PreparedLocalizedAcceptanceVerifier,
 )
-from denser.evidence.types import AcceptanceContract, PhysicalGrid
+from denser.evidence.architecture import compute_acceptance_evidence
+from denser.evidence.types import AcceptanceContract, AcceptanceEvidence, PhysicalGrid
 from denser.repair.escalate import repair_until_verified
 from denser.repair.packet_v2 import apply_repair_packet
 
@@ -59,7 +60,13 @@ def _packet_for(
     grid: PhysicalGrid,
     *,
     fallback: bool,
+    reference_evidence: AcceptanceEvidence,
 ) -> tuple[bytes, ByteBreakdown]:
+    decoded_evidence = (
+        reference_evidence
+        if np.array_equal(source, decoded)
+        else compute_acceptance_evidence(decoded, grid, contract)
+    )
     certificate = build_certificate(
         source,
         candidate,
@@ -67,6 +74,8 @@ def _packet_for(
         physical_grid=grid,
         decoded_rgb=decoded,
         repair_payload=repair_payload,
+        reference_evidence=reference_evidence,
+        decoded_evidence=decoded_evidence,
     )
     if not verify_certificate(decoded, certificate, contract).passed:
         raise RuntimeError("encoder-created certificate failed immediate verification")
@@ -119,7 +128,14 @@ def select_smallest_accepted_candidate(
     fallback = fallback_codec.encode(source)
     fallback_decoded = fallback_codec.decode(fallback.payload, source.shape)
     fallback_packet, fallback_breakdown = _packet_for(
-        source, fallback, fallback_decoded, b"", contract, grid, fallback=True
+        source,
+        fallback,
+        fallback_decoded,
+        b"",
+        contract,
+        grid,
+        fallback=True,
+        reference_evidence=prepared_verifier.reference_evidence,
     )
     best_complete_bytes = len(fallback_packet)
     fallback_identity_bytes = len(
@@ -191,7 +207,14 @@ def select_smallest_accepted_candidate(
             repair_payload = repair.payload
             status = repair.status
         packet, breakdown = _packet_for(
-            source, candidate, decoded, repair_payload, contract, grid, fallback=False
+            source,
+            candidate,
+            decoded,
+            repair_payload,
+            contract,
+            grid,
+            fallback=False,
+            reference_evidence=prepared_verifier.reference_evidence,
         )
         return AcceptedTileCandidate(
             candidate, decoded, repair_payload, packet, breakdown, status, ()

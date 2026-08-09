@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from denser.evidence.localized import LocalizedAcceptanceVerifier
+from denser.evidence.architecture import compute_acceptance_evidence
 from denser.evidence.types import AcceptanceContract, AcceptanceEvidence
 
 
@@ -39,6 +40,9 @@ def test_prepared_verifier_matches_direct_result_and_binds_source() -> None:
         AcceptanceContract(0.01, 0.01, 0.001, 0.01), 8
     )
     prepared = verifier.prepare(source)
+    assert prepared.reference_evidence == compute_acceptance_evidence(
+        source, prepared.physical_grid, prepared.contract
+    )
     assert prepared.verify(source, decoded) == verifier.verify(source, decoded)
     different = source.copy()
     different[-1, -1] = 0

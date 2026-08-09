@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import denser.experiments.candidate_selection as selection_module
 
 from denser.certificates.encode import decode_certificate
 from denser.certificates.verify import verify_certificate
@@ -188,6 +189,37 @@ def test_exact_candidate_does_not_run_localized_comparison(monkeypatch) -> None:
         prepared_verifier=prepared,
     )
     assert selected.candidate.profile_id == "exact"
+
+
+def test_selection_reuses_prepared_evidence_for_certificate_builds(monkeypatch) -> None:
+    source = np.arange(8 * 8 * 3, dtype=np.uint8).reshape(8, 8, 3)
+    contract = AcceptanceContract()
+    grid = PhysicalGrid(0.25, 0.25)
+    prepared = LocalizedAcceptanceVerifier(contract, 8, grid).prepare(source)
+    real_build = selection_module.build_certificate
+    evidence_arguments = []
+
+    def capture(*args, **kwargs):  # type: ignore[no-untyped-def]
+        evidence_arguments.append(
+            (kwargs.get("reference_evidence"), kwargs.get("decoded_evidence"))
+        )
+        return real_build(*args, **kwargs)
+
+    monkeypatch.setattr(selection_module, "build_certificate", capture)
+    registry = CodecRegistry()
+    registry.register("fixture", lambda payload, allocation, shape, profile: source.copy())
+    select_smallest_accepted_candidate(
+        source,
+        [_candidate("exact", b"x")],
+        registry,
+        contract,
+        grid,
+        cell_size_px=8,
+        prepared_verifier=prepared,
+    )
+    assert evidence_arguments
+    assert all(reference is prepared.reference_evidence for reference, _ in evidence_arguments)
+    assert all(decoded is prepared.reference_evidence for _, decoded in evidence_arguments)
 
 
 def test_standard_portfolio_uses_frozen_jpeg90_as_initial_byte_bound() -> None:

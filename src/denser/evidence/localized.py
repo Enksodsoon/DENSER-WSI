@@ -70,6 +70,10 @@ class PreparedLocalizedAcceptanceVerifier:
         default_factory=dict
     )
 
+    @property
+    def reference_evidence(self) -> AcceptanceEvidence:
+        return self._reference
+
     def prepare_cells(self) -> PreparedLocalizedAcceptanceVerifier:
         acceptance_groups = tuple(name for name, _values in self._reference.groups)
         height, width, _ = self._source.shape

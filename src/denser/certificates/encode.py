@@ -15,7 +15,7 @@ from denser.codecs.base import EncodedCandidate
 from denser.codecs.lossless import SharedLosslessCodec
 from denser.core.canonical import canonical_json_bytes
 from denser.evidence.architecture import compute_acceptance_evidence
-from denser.evidence.types import AcceptanceContract, PhysicalGrid
+from denser.evidence.types import AcceptanceContract, AcceptanceEvidence, PhysicalGrid
 from denser.method.candidates import decode_candidate
 
 
@@ -51,6 +51,8 @@ def _base_certificate(
     grid: PhysicalGrid,
     decoded_rgb: np.ndarray | None,
     repair_payload: bytes,
+    reference_evidence: AcceptanceEvidence | None = None,
+    decoded_evidence: AcceptanceEvidence | None = None,
 ) -> EvidenceCertificate:
     source = np.asarray(source_rgb)
     if decoded_rgb is not None:
@@ -61,8 +63,8 @@ def _base_certificate(
         decoded = decode_candidate(candidate.payload, candidate.allocation_map)
     if source.dtype != np.uint8 or source.shape != decoded.shape:
         raise ValueError("source and decoded candidate must be matching uint8 RGB arrays")
-    reference = compute_acceptance_evidence(source, grid, contract)
-    decoded_evidence = compute_acceptance_evidence(decoded, grid, contract)
+    reference = reference_evidence or compute_acceptance_evidence(source, grid, contract)
+    decoded_values = decoded_evidence or compute_acceptance_evidence(decoded, grid, contract)
     payload = build_reference_payload(reference, quantization) if mode == "self_verifying" else None
     unsigned = EvidenceCertificate(
         version="HE-V1-certificate-1",
@@ -76,7 +78,7 @@ def _base_certificate(
         candidate_id=f"{candidate.codec_id}:{candidate.profile_id}",
         fallback_id=SharedLosslessCodec.profile_id,
         repair_region_hex=hashlib.sha256(repair_payload).hexdigest() if repair_payload else "",
-        decoded_evidence_sha256=decoded_evidence.sha256,
+        decoded_evidence_sha256=decoded_values.sha256,
         packet_sha256=hashlib.sha256(
             candidate.allocation_map + candidate.payload + repair_payload
         ).hexdigest(),
@@ -96,6 +98,8 @@ def build_certificate(
     physical_grid: PhysicalGrid | None = None,
     decoded_rgb: np.ndarray | None = None,
     repair_payload: bytes = b"",
+    reference_evidence: AcceptanceEvidence | None = None,
+    decoded_evidence: AcceptanceEvidence | None = None,
 ) -> EvidenceCertificate:
     return _base_certificate(
         source_rgb,
@@ -106,6 +110,8 @@ def build_certificate(
         grid=physical_grid or PhysicalGrid(0.25, 0.25),
         decoded_rgb=decoded_rgb,
         repair_payload=repair_payload,
+        reference_evidence=reference_evidence,
+        decoded_evidence=decoded_evidence,
     )
 
 
