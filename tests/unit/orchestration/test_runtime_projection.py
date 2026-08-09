@@ -45,14 +45,38 @@ def test_projection_requires_five_distinct_development_slides() -> None:
         )
 
 
-@pytest.mark.parametrize("workers", [0, 3])
-def test_projection_enforces_measured_two_worker_host_limit(workers: int) -> None:
+@pytest.mark.parametrize("workers", [0, 7])
+def test_projection_enforces_declared_worker_limit(workers: int) -> None:
     with pytest.raises(ValueError, match="worker count"):
         project_confirmatory_runtime(
             [_sample(index) for index in range(5)],
             final_source_bytes=10_000,
             worker_count=workers,
         )
+
+
+def test_projection_requires_measured_scaling_above_two_workers() -> None:
+    with pytest.raises(ValueError, match="measured parallel"):
+        project_confirmatory_runtime(
+            [_sample(index) for index in range(5)],
+            final_source_bytes=10_000,
+            worker_count=6,
+        )
+
+
+def test_projection_uses_conservative_measured_parallel_speedup() -> None:
+    report = project_confirmatory_runtime(
+        [_sample(index) for index in range(5)],
+        final_source_bytes=10_000,
+        worker_count=6,
+        measured_parallel_speedup=2.25,
+        parallel_benchmark_tiles=12,
+    )
+    assert report.measured_parallel_speedup == 2.25
+    assert report.parallel_benchmark_tiles == 12
+    assert report.projected_confirmatory_seconds == pytest.approx(
+        1_000 * 2.0 * 1.25 / 2.25
+    )
 
 
 def test_runtime_sample_indices_are_deterministic_uniform_without_replacement() -> None:

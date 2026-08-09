@@ -110,6 +110,47 @@ def test_final_encodes_every_level0_tile_once(tmp_path: Path) -> None:
     ]
 
 
+def test_final_uses_six_tile_workers_but_only_two_codec_builders(tmp_path: Path) -> None:
+    active_builders = 0
+    maximum_builders = 0
+    lock = threading.Lock()
+
+    def bounded_standard(tile, ladder):  # type: ignore[no-untyped-def]
+        nonlocal active_builders, maximum_builders
+        with lock:
+            active_builders += 1
+            maximum_builders = max(maximum_builders, active_builders)
+        time.sleep(0.02)
+        with lock:
+            active_builders -= 1
+        return [SharedLosslessCodec().encode(tile)]
+
+    slide = FinalSlideInput(
+        "parallel-final",
+        48,
+        8,
+        8,
+        lambda address: np.full((address.height, address.width, 3), 120, dtype=np.uint8),
+    )
+    row = SlideRecord("parallel-final", "SYNTHETIC", "4" * 64, "5" * 64, 1, "final", None)
+    manifest = PartitionManifest("MC-V1-manifest-1", 9, (row,), "e" * 64)
+    context = freeze_context()
+    run_final_holdout(
+        FinalHoldoutConfig(
+            tmp_path,
+            (slide,),
+            context,
+            cpu_workers=6,
+            max_codec_subprocesses=2,
+            standard_builder=bounded_standard,
+            quadtree_builder=no_quadtree,
+        ),
+        manifest,
+        create_freeze_record(context),
+    )
+    assert maximum_builders == 2
+
+
 def test_random_access_probes_are_deterministic_and_not_endpoint_only() -> None:
     addresses = tuple(iter_level0_grid(4096, 4096, 512))
     first = select_random_access_probes(addresses, "f" * 64, "slide", 16)

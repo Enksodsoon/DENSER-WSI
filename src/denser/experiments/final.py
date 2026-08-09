@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -56,6 +57,7 @@ class FinalHoldoutConfig:
     methods: tuple[str, ...] = ("standard", "uniform", "denser")
     candidate_steps: tuple[float, ...] = (1.0, 2.0, 4.0)
     cpu_workers: int = 6
+    max_codec_subprocesses: int = 2
     standard_ladder: StandardLadder = StandardLadder()
     standard_builder: Callable[[np.ndarray, StandardLadder], list[EncodedCandidate]] = build_standard_candidates
     quadtree_builder: Callable[[np.ndarray, np.ndarray], list[EncodedCandidate]] = build_jpeg_quadtree_candidates
@@ -79,6 +81,8 @@ class FinalHoldoutConfig:
             raise ValueError("source-extension final method requires a bound candidate builder")
         if not 1 <= self.cpu_workers <= 6:
             raise ValueError("final CPU workers must be between one and six")
+        if not 1 <= self.max_codec_subprocesses <= 2:
+            raise ValueError("final codec subprocesses must be one or two")
         if self.checkpoint_interval_tiles <= 0:
             raise ValueError("final checkpoint interval must be positive")
         if self.random_access_probe_count <= 0:
@@ -319,6 +323,7 @@ def run_final_holdout(
             raise RuntimeError("final slide completion marker and containers disagree")
         writers: dict[str, McV2Writer] = {}
         encoding_seconds_by_method = {method: 0.0 for method in config.methods}
+        codec_slots = threading.Semaphore(config.max_codec_subprocesses)
 
         def encode_address(address: TileAddress):  # type: ignore[no-untyped-def]
             tile = np.asarray(slide.read_tile(address))
@@ -344,9 +349,10 @@ def run_final_holdout(
             for method in config.methods:
                 started = time.perf_counter()
                 if method == "standard":
-                    candidates = config.standard_builder(
-                        tile, slide.standard_ladder or config.standard_ladder
-                    )
+                    with codec_slots:
+                        candidates = config.standard_builder(
+                            tile, slide.standard_ladder or config.standard_ladder
+                        )
                 elif method == "uniform":
                     candidates = build_uniform_candidates(tile, profile)
                 elif slide.source_candidate_builder is not None:
@@ -412,7 +418,7 @@ def run_final_holdout(
                     raise RuntimeError("final slide writer disagrees with shared progress")
                 writer.rollback_to_checkpoint(shared_count)
             try:
-                tile_workers = min(3, config.cpu_workers)
+                tile_workers = config.cpu_workers
                 last_checkpoint = shared_count
                 with ThreadPoolExecutor(max_workers=tile_workers) as pool:
                     for start in range(shared_count, len(addresses), tile_workers):

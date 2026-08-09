@@ -34,6 +34,8 @@ class RuntimeProjection:
     maximum_tiles_per_source_byte: float
     p95_tile_pipeline_seconds: float
     worker_count: int
+    measured_parallel_speedup: float
+    parallel_benchmark_tiles: int
     safety_factor: float
     projected_confirmatory_seconds: float
 
@@ -64,6 +66,8 @@ def project_confirmatory_runtime(
     *,
     final_source_bytes: int,
     worker_count: int,
+    measured_parallel_speedup: float | None = None,
+    parallel_benchmark_tiles: int = 0,
     safety_factor: float = 1.25,
 ) -> RuntimeProjection:
     """Project full final runtime without opening final pixels.
@@ -77,8 +81,21 @@ def project_confirmatory_runtime(
         raise ValueError("projection requires five distinct development slides")
     if final_source_bytes <= 0:
         raise ValueError("final source byte total must be positive")
-    if worker_count not in (1, 2):
-        raise ValueError("worker count must respect the measured two-worker host limit")
+    if worker_count < 1 or worker_count > 6:
+        raise ValueError("worker count must remain between one and six")
+    if worker_count > 2 and measured_parallel_speedup is None:
+        raise ValueError("measured parallel scaling is required above two workers")
+    if measured_parallel_speedup is not None:
+        if (
+            not math.isfinite(measured_parallel_speedup)
+            or measured_parallel_speedup <= 1
+            or measured_parallel_speedup > worker_count
+        ):
+            raise ValueError("measured parallel speedup is outside the worker bounds")
+        if parallel_benchmark_tiles < 8:
+            raise ValueError("measured parallel scaling requires at least eight tiles")
+    elif parallel_benchmark_tiles:
+        raise ValueError("parallel benchmark tiles require measured parallel speedup")
     if not math.isfinite(safety_factor) or safety_factor < 1:
         raise ValueError("runtime safety factor must be finite and at least one")
     density = max(sample.level0_tiles / sample.source_bytes for sample in samples)
@@ -86,14 +103,21 @@ def project_confirmatory_runtime(
     p95_seconds = _nearest_rank_p95(
         [value for sample in samples for value in sample.tile_pipeline_seconds]
     )
-    projected_seconds = projected_tiles * p95_seconds * safety_factor / worker_count
+    effective_speedup = measured_parallel_speedup or float(worker_count)
+    projected_seconds = projected_tiles * p95_seconds * safety_factor / effective_speedup
     return RuntimeProjection(
-        "development-max-density-p95-v1",
+        (
+            "development-max-density-p95-measured-scaling-v2"
+            if measured_parallel_speedup is not None
+            else "development-max-density-p95-v1"
+        ),
         len({sample.slide_key for sample in samples}),
         projected_tiles,
         density,
         p95_seconds,
         worker_count,
+        effective_speedup,
+        parallel_benchmark_tiles,
         safety_factor,
         projected_seconds,
     )

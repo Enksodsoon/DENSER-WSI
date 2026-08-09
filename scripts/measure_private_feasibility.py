@@ -245,6 +245,34 @@ def main() -> int:
         raise RuntimeError("feasibility measurement requires a passing HE-V1 audit")
     calibration = calibration_record_from_dict(calibration_document["calibration"])
     contract = acceptance_contract_from_calibration(calibration)
+    parallel_scaling = None
+    parallel_scaling_digest = "not-required"
+    if arguments.worker_count > 2:
+        scaling_path = layout.resolve(
+            "results",
+            "development",
+            f"generation-{arguments.generation}",
+            f"parallel-scaling-w{arguments.worker_count}.private.json",
+        )
+        scaling_bytes = scaling_path.read_bytes()
+        parallel_scaling = json.loads(scaling_bytes)
+        parallel_scaling_digest = hashlib.sha256(scaling_bytes).hexdigest()
+        expected_scaling = {
+            "version": "DENSER-private-parallel-scaling-1",
+            "generation": arguments.generation,
+            "code_commit": arguments.code_commit,
+            "image_digest": arguments.image_digest,
+            "calibration_digest": calibration.sha256,
+            "routing_digest": routing_digest,
+            "workers": arguments.worker_count,
+            "codec_subprocesses": 2,
+            "packets_equal": True,
+            "source_data_processed": True,
+        }
+        if any(parallel_scaling.get(key) != value for key, value in expected_scaling.items()):
+            raise RuntimeError("parallel scaling evidence does not match the runtime")
+        if int(parallel_scaling.get("benchmark_tiles", 0)) < 8:
+            raise RuntimeError("parallel scaling evidence has too few tiles")
     output = layout.resolve(
         "results",
         arguments.partition,
@@ -262,6 +290,7 @@ def main() -> int:
         "sampling_seed": arguments.seed,
         "tiles_per_slide": arguments.tiles_per_slide,
         "candidate_workers": arguments.candidate_workers,
+        "parallel_scaling_digest": parallel_scaling_digest,
         "standard_routing_digest": routing_digest,
         "partition": arguments.partition,
         "exclude_missing_scale": arguments.exclude_missing_scale,
@@ -430,6 +459,16 @@ def main() -> int:
             timing_samples,
             final_source_bytes=sum(int(row["file_size"]) for row in final_rows),
             worker_count=arguments.worker_count,
+            measured_parallel_speedup=(
+                float(parallel_scaling["measured_parallel_speedup"])
+                if parallel_scaling is not None
+                else None
+            ),
+            parallel_benchmark_tiles=(
+                int(parallel_scaling["benchmark_tiles"])
+                if parallel_scaling is not None
+                else 0
+            ),
         )
         gate = evaluate_generation_gate(
             FeasibilityEvidence(
