@@ -8,7 +8,7 @@ from denser.evidence.architecture import (
     compute_acceptance_evidence,
     compute_acceptance_groups,
 )
-from denser.evidence.types import AcceptanceContract, AcceptanceEvidence
+from denser.evidence.types import AcceptanceContract, AcceptanceEvidence, PhysicalGrid
 
 
 def test_localized_verifier_returns_bounded_failed_cells() -> None:
@@ -150,6 +150,24 @@ def test_nondivisible_hybrid_batch_matches_scalar_acceptance(monkeypatch) -> Non
     decoded[64:, 64:] = 255
     verifier = LocalizedAcceptanceVerifier(
         AcceptanceContract(visual_relative_tolerance=0.01), 32
+    )
+    hybrid = verifier.verify(source, decoded)
+    monkeypatch.setattr(
+        "denser.evidence.localized.compute_cell_acceptance_batch",
+        lambda *args, **kwargs: None,
+    )
+    scalar = verifier.verify(source, decoded)
+    assert hybrid == scalar
+
+
+def test_physical_cell_33_batch_matches_scalar_acceptance(monkeypatch) -> None:
+    source = np.random.default_rng(93).integers(0, 256, (66, 66, 3), dtype=np.uint8)
+    decoded = source.copy()
+    decoded[2:28, 3:31] //= 2
+    verifier = LocalizedAcceptanceVerifier(
+        AcceptanceContract(visual_relative_tolerance=0.01),
+        33,
+        PhysicalGrid(0.2424, 0.2424),
     )
     hybrid = verifier.verify(source, decoded)
     monkeypatch.setattr(

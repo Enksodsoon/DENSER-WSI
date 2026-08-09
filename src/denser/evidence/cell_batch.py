@@ -71,8 +71,24 @@ def _component_groups(mask: np.ndarray, size: int) -> dict[int, list[tuple[int, 
 
 def _spatial_means(values: np.ndarray) -> np.ndarray:
     rows, columns, size, _ = values.shape
-    return values.reshape(rows, columns, 4, size // 4, 4, size // 4).mean(
-        axis=(3, 5)
+    if size % 4 == 0:
+        return values.reshape(rows, columns, 4, size // 4, 4, size // 4).mean(
+            axis=(3, 5)
+        ).reshape(rows * columns, 16)
+    quotient, remainder = divmod(size, 4)
+    lengths = tuple(
+        quotient + (1 if index < remainder else 0) for index in range(4)
+    )
+    edges = np.cumsum((0, *lengths))
+    return np.stack(
+        [
+            values[:, :, edges[y] : edges[y + 1], edges[x] : edges[x + 1]].mean(
+                axis=(2, 3)
+            )
+            for y in range(4)
+            for x in range(4)
+        ],
+        axis=2,
     ).reshape(rows * columns, 16)
 
 
@@ -87,7 +103,6 @@ def compute_cell_acceptance_batch(
         or pixels.ndim != 3
         or pixels.shape[2] != 3
         or cell_size < 4
-        or cell_size % 4
         or pixels.shape[0] % cell_size
         or pixels.shape[1] % cell_size
     ):

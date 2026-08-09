@@ -187,6 +187,23 @@ def test_batched_cell_evidence_matches_scalar_reference() -> None:
                 )
 
 
+def test_batched_cell_evidence_matches_scalar_for_physical_cell_33() -> None:
+    rgb = np.random.default_rng(25).integers(0, 256, (66, 66, 3), dtype=np.uint8)
+    grid = PhysicalGrid(0.2424, 0.2424)
+    observed = compute_cell_acceptance_groups(rgb, grid, 33)
+    assert observed is not None
+    for y in range(0, 66, 33):
+        for x in range(0, 66, 33):
+            expected = compute_acceptance_groups(rgb[y : y + 33, x : x + 33], grid)
+            actual = observed[(x, y, 33, 33)]
+            for (_name, actual_values), (_other, expected_values) in zip(
+                actual, expected, strict=True
+            ):
+                assert actual_values == pytest.approx(
+                    expected_values, rel=1e-10, abs=1e-10
+                )
+
+
 def test_batched_cell_comparison_matches_scalar_contract() -> None:
     source = np.random.default_rng(24).integers(0, 256, (64, 64, 3), dtype=np.uint8)
     candidate = source.copy()
