@@ -26,8 +26,8 @@ from denser.evidence.localized import LocalizedAcceptanceVerifier
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
 from denser.experiments.candidate_selection import (
     AcceptedTileCandidate,
-    choose_smallest_accepted_result,
     decode_and_verify_tile_packet,
+    prepare_candidate_selection,
     select_smallest_accepted_candidate,
 )
 from denser.experiments.freeze import FreezeContext, FreezeRecord, verify_freeze_record
@@ -330,6 +330,13 @@ def run_final_holdout(
             prepared_verifier = LocalizedAcceptanceVerifier(
                 contract, cell_size_px, grid
             ).prepare(tile)
+            prepared_selection = prepare_candidate_selection(
+                tile,
+                contract,
+                grid,
+                cell_size_px=cell_size_px,
+                prepared_verifier=prepared_verifier,
+            )
             encoded_methods = []
             sensitivity: np.ndarray | None = None
             standard_selected: AcceptedTileCandidate | None = None
@@ -364,6 +371,12 @@ def run_final_holdout(
                     grid,
                     cell_size_px=cell_size_px,
                     prepared_verifier=prepared_verifier,
+                    prepared_selection=prepared_selection,
+                    incumbent=(
+                        standard_selected
+                        if method == "denser" and slide.source_candidate_builder is not None
+                        else None
+                    ),
                 )
                 if method == "standard":
                     standard_selected = selected
@@ -372,9 +385,6 @@ def run_final_holdout(
                 elif method == "denser" and slide.source_candidate_builder is not None:
                     if standard_selected is None:
                         raise RuntimeError("source extension requires the standard result first")
-                    selected = choose_smallest_accepted_result(
-                        standard_selected, selected
-                    )
                     elapsed = standard_elapsed + (time.perf_counter() - started)
                 else:
                     elapsed = time.perf_counter() - started

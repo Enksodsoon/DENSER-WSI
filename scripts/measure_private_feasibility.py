@@ -34,8 +34,9 @@ from denser.evidence.localized import (
 from denser.evidence.types import PhysicalGrid
 from denser.experiments.candidate_selection import (
     AcceptedTileCandidate,
-    choose_smallest_accepted_result,
+    PreparedCandidateSelection,
     decode_and_verify_tile_packet,
+    prepare_candidate_selection,
     select_smallest_accepted_candidate,
 )
 from denser.governance.run_layout import RunLayout
@@ -124,6 +125,8 @@ def _measure_selection(
     contract: object,
     grid: PhysicalGrid,
     prepared_verifier: PreparedLocalizedAcceptanceVerifier,
+    prepared_selection: PreparedCandidateSelection,
+    incumbent: AcceptedTileCandidate | None = None,
     candidate_workers: int = 1,
 ) -> tuple[AcceptedTileCandidate, float]:
     started = time.perf_counter()
@@ -135,6 +138,8 @@ def _measure_selection(
         grid,
         cell_size_px=max(1, round(8.0 / grid.mean_mpp)),
         prepared_verifier=prepared_verifier,
+        prepared_selection=prepared_selection,
+        incumbent=incumbent,
         max_candidate_workers=candidate_workers,
     )
     return selected, time.perf_counter() - started
@@ -314,6 +319,13 @@ def main() -> int:
                         max(1, round(8.0 / grid.mean_mpp)),
                         grid,
                     ).prepare(rgb)
+                    prepared_selection = prepare_candidate_selection(
+                        rgb,
+                        contract,
+                        grid,
+                        cell_size_px=max(1, round(8.0 / grid.mean_mpp)),
+                        prepared_verifier=prepared_verifier,
+                    )
                     started = time.perf_counter()
                     standard_ladder = (
                         ladder_from_profile_ids(routing[row.project_id])
@@ -331,7 +343,8 @@ def main() -> int:
                         contract,
                         grid,
                         prepared_verifier,
-                        arguments.candidate_workers,
+                        prepared_selection,
+                        candidate_workers=arguments.candidate_workers,
                     )
                     started = time.perf_counter()
                     source_candidates = [
@@ -345,8 +358,10 @@ def main() -> int:
                         contract,
                         grid,
                         prepared_verifier,
+                        prepared_selection,
+                        incumbent=standard,
                     )
-                    denser = choose_smallest_accepted_result(standard, source_selected)
+                    denser = source_selected
                     denser_build = standard_build + source_build
                     denser_select = standard_select + source_select
                     tile_pipeline_seconds = time.perf_counter() - total_started

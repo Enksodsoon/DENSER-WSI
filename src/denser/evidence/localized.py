@@ -75,6 +75,10 @@ class PreparedLocalizedAcceptanceVerifier:
     def reference_evidence(self) -> AcceptanceEvidence:
         return self._reference
 
+    @property
+    def source_sha256(self) -> str:
+        return self._source_sha256
+
     def evidence_for(self, decoded: np.ndarray) -> AcceptanceEvidence:
         candidate = np.asarray(decoded)
         if (

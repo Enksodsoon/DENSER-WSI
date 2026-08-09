@@ -254,4 +254,5 @@ def test_final_skips_certificates_for_byte_dominated_candidates(
         manifest,
         create_freeze_record(context),
     )
-    assert calls == 7
+    # One bound fallback certificate is shared by every method for the tile.
+    assert calls == 5

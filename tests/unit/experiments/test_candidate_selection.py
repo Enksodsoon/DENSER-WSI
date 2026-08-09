@@ -15,6 +15,7 @@ from denser.evidence.localized import LocalizedAcceptanceResult, LocalizedAccept
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
 from denser.experiments.candidate_selection import (
     choose_smallest_accepted_result,
+    prepare_candidate_selection,
     select_smallest_accepted_candidate,
 )
 
@@ -62,6 +63,70 @@ def test_extension_portfolio_retains_smaller_baseline_result() -> None:
     )
     assert choose_smallest_accepted_result(small, large) is small
     assert choose_smallest_accepted_result(large, small) is small
+
+
+def test_extension_portfolio_reuses_bound_fallback_and_incumbent(monkeypatch) -> None:
+    source = np.arange(8 * 8 * 3, dtype=np.uint8).reshape(8, 8, 3)
+    contract = AcceptanceContract()
+    grid = PhysicalGrid(0.25, 0.25)
+    prepared = LocalizedAcceptanceVerifier(contract, 8, grid).prepare(source)
+    encode_calls = 0
+    real_encode = SharedLosslessCodec.encode
+
+    def counted_encode(self, pixels):  # type: ignore[no-untyped-def]
+        nonlocal encode_calls
+        encode_calls += 1
+        return real_encode(self, pixels)
+
+    monkeypatch.setattr(SharedLosslessCodec, "encode", counted_encode)
+    context = prepare_candidate_selection(
+        source, contract, grid, cell_size_px=8, prepared_verifier=prepared
+    )
+    registry = CodecRegistry()
+    registry.register("fixture", lambda payload, allocation, shape, profile: source.copy())
+    standard = select_smallest_accepted_candidate(
+        source,
+        [_candidate("standard", b"s" * 16)],
+        registry,
+        contract,
+        grid,
+        cell_size_px=8,
+        prepared_verifier=prepared,
+        prepared_selection=context,
+    )
+    extended = select_smallest_accepted_candidate(
+        source,
+        [_candidate("extension", b"x")],
+        registry,
+        contract,
+        grid,
+        cell_size_px=8,
+        prepared_verifier=prepared,
+        prepared_selection=context,
+        incumbent=standard,
+    )
+    assert encode_calls == 1
+    assert extended.candidate.profile_id == "extension"
+
+
+def test_prepared_selection_rejects_a_different_source() -> None:
+    source = np.zeros((8, 8, 3), dtype=np.uint8)
+    contract = AcceptanceContract()
+    grid = PhysicalGrid(0.25, 0.25)
+    prepared = LocalizedAcceptanceVerifier(contract, 8, grid).prepare(source)
+    context = prepare_candidate_selection(
+        source, contract, grid, cell_size_px=8, prepared_verifier=prepared
+    )
+    with np.testing.assert_raises_regex(ValueError, "prepared selection source"):
+        select_smallest_accepted_candidate(
+            np.ones_like(source),
+            [],
+            CodecRegistry(),
+            contract,
+            grid,
+            cell_size_px=8,
+            prepared_selection=context,
+        )
 
 
 def test_selection_falls_back_when_no_candidate_beats_verified_lossless() -> None:

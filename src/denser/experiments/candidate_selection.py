@@ -38,6 +38,19 @@ class AcceptedTileCandidate:
     rejected_profiles: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedCandidateSelection:
+    source_sha256: str
+    contract: AcceptanceContract
+    grid: PhysicalGrid
+    cell_size_px: int
+    verifier: PreparedLocalizedAcceptanceVerifier
+    fallback_codec: SharedLosslessCodec
+    fallback_candidate: EncodedCandidate
+    fallback_decoded: np.ndarray
+    fallback_result: AcceptedTileCandidate
+
+
 def choose_smallest_accepted_result(
     *results: AcceptedTileCandidate,
 ) -> AcceptedTileCandidate:
@@ -95,36 +108,30 @@ def _packet_for(
     return encoded, breakdown
 
 
-def select_smallest_accepted_candidate(
+def prepare_candidate_selection(
     source_rgb: np.ndarray,
-    candidates: list[EncodedCandidate],
-    registry: CodecRegistry,
     contract: AcceptanceContract,
     grid: PhysicalGrid,
     *,
     cell_size_px: int,
-    halo_um: float = 2.0,
     prepared_verifier: PreparedLocalizedAcceptanceVerifier | None = None,
-    max_candidate_workers: int = 1,
-) -> AcceptedTileCandidate:
+) -> PreparedCandidateSelection:
     source = np.asarray(source_rgb)
     if source.dtype != np.uint8 or source.ndim != 3 or source.shape[2] != 3:
         raise ValueError("candidate selection requires a uint8 RGB tile")
-    if not 1 <= max_candidate_workers <= 6:
-        raise ValueError("candidate workers must remain between one and six")
-    if prepared_verifier is None:
-        prepared_verifier = LocalizedAcceptanceVerifier(
-            contract, cell_size_px, grid
-        ).prepare(source)
-    elif (
-        prepared_verifier.contract != contract
-        or prepared_verifier.cell_size_px != cell_size_px
-        or prepared_verifier.physical_grid != grid
+    verifier = prepared_verifier or LocalizedAcceptanceVerifier(
+        contract, cell_size_px, grid
+    ).prepare(source)
+    if (
+        verifier.contract != contract
+        or verifier.cell_size_px != cell_size_px
+        or verifier.physical_grid != grid
     ):
         raise ValueError("prepared verifier configuration does not match selection")
+    source_sha256 = hashlib.sha256(source.tobytes(order="C")).hexdigest()
+    if source_sha256 != verifier.source_sha256:
+        raise ValueError("prepared verifier source does not match selection")
     fallback_codec = SharedLosslessCodec()
-    accepted: list[tuple[int, str, AcceptedTileCandidate]] = []
-    rejected: list[str] = []
     fallback = fallback_codec.encode(source)
     fallback_decoded = fallback_codec.decode(fallback.payload, source.shape)
     fallback_packet, fallback_breakdown = _packet_for(
@@ -135,9 +142,99 @@ def select_smallest_accepted_candidate(
         contract,
         grid,
         fallback=True,
-        prepared_verifier=prepared_verifier,
+        prepared_verifier=verifier,
     )
+    fallback_result = AcceptedTileCandidate(
+        fallback,
+        fallback_decoded,
+        b"",
+        fallback_packet,
+        fallback_breakdown,
+        "fallback",
+        (),
+    )
+    return PreparedCandidateSelection(
+        source_sha256,
+        contract,
+        grid,
+        cell_size_px,
+        verifier,
+        fallback_codec,
+        fallback,
+        fallback_decoded,
+        fallback_result,
+    )
+
+
+def select_smallest_accepted_candidate(
+    source_rgb: np.ndarray,
+    candidates: list[EncodedCandidate],
+    registry: CodecRegistry,
+    contract: AcceptanceContract,
+    grid: PhysicalGrid,
+    *,
+    cell_size_px: int,
+    halo_um: float = 2.0,
+    prepared_verifier: PreparedLocalizedAcceptanceVerifier | None = None,
+    prepared_selection: PreparedCandidateSelection | None = None,
+    incumbent: AcceptedTileCandidate | None = None,
+    max_candidate_workers: int = 1,
+) -> AcceptedTileCandidate:
+    source = np.asarray(source_rgb)
+    if source.dtype != np.uint8 or source.ndim != 3 or source.shape[2] != 3:
+        raise ValueError("candidate selection requires a uint8 RGB tile")
+    if not 1 <= max_candidate_workers <= 6:
+        raise ValueError("candidate workers must remain between one and six")
+    if prepared_selection is not None:
+        source_sha256 = hashlib.sha256(source.tobytes(order="C")).hexdigest()
+        if source_sha256 != prepared_selection.source_sha256:
+            raise ValueError("prepared selection source does not match selection")
+        if (
+            prepared_selection.contract != contract
+            or prepared_selection.grid != grid
+            or prepared_selection.cell_size_px != cell_size_px
+        ):
+            raise ValueError("prepared selection configuration does not match selection")
+        if prepared_verifier is None:
+            prepared_verifier = prepared_selection.verifier
+        elif prepared_verifier is not prepared_selection.verifier:
+            raise ValueError("prepared selection verifier does not match selection")
+    if prepared_verifier is None:
+        prepared_verifier = LocalizedAcceptanceVerifier(
+            contract, cell_size_px, grid
+        ).prepare(source)
+    elif (
+        prepared_verifier.contract != contract
+        or prepared_verifier.cell_size_px != cell_size_px
+        or prepared_verifier.physical_grid != grid
+    ):
+        raise ValueError("prepared verifier configuration does not match selection")
+    if prepared_selection is None:
+        prepared_selection = prepare_candidate_selection(
+            source,
+            contract,
+            grid,
+            cell_size_px=cell_size_px,
+            prepared_verifier=prepared_verifier,
+        )
+    fallback_codec = prepared_selection.fallback_codec
+    accepted: list[tuple[int, str, AcceptedTileCandidate]] = []
+    rejected: list[str] = list(incumbent.rejected_profiles) if incumbent else []
+    fallback = prepared_selection.fallback_candidate
+    fallback_decoded = prepared_selection.fallback_decoded
+    fallback_result = prepared_selection.fallback_result
+    fallback_packet = fallback_result.packet
+    fallback_breakdown = fallback_result.breakdown
     best_complete_bytes = len(fallback_packet)
+    if incumbent is not None:
+        if (
+            incumbent.decoded.dtype != np.uint8
+            or incumbent.decoded.shape != source.shape
+            or incumbent.breakdown.complete != len(incumbent.packet)
+        ):
+            raise ValueError("incumbent selection result is invalid")
+        accepted.append((len(incumbent.packet), incumbent.candidate.profile_id, incumbent))
+        best_complete_bytes = min(best_complete_bytes, len(incumbent.packet))
     fallback_identity_bytes = len(
         canonical_json_bytes(f"{fallback.codec_id}:{fallback.profile_id}")
     )
@@ -257,15 +354,6 @@ def select_smallest_accepted_candidate(
                 else:
                     accepted.append((len(result.packet), candidate.profile_id, result))
 
-    fallback_result = AcceptedTileCandidate(
-        fallback,
-        fallback_decoded,
-        b"",
-        fallback_packet,
-        fallback_breakdown,
-        "fallback",
-        tuple(rejected),
-    )
     accepted.append((len(fallback_packet), fallback.profile_id, fallback_result))
     selected = min(accepted, key=lambda item: (item[0], item[1]))[2]
     return AcceptedTileCandidate(
