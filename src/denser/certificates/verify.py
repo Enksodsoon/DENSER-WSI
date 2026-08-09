@@ -7,8 +7,9 @@ import numpy as np
 
 from denser.certificates.encode import contract_digest
 from denser.certificates.models import EvidenceCertificate
+from denser.core.canonical import canonical_json_bytes
 from denser.evidence.architecture import compute_acceptance_evidence
-from denser.evidence.types import AcceptanceContract, PhysicalGrid
+from denser.evidence.types import AcceptanceContract, AcceptanceEvidence, PhysicalGrid
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,10 +19,11 @@ class CertificateVerificationResult:
     failure_reason: str = ""
 
 
-def verify_certificate(
+def _verify_certificate(
     decoded_rgb: np.ndarray,
     certificate: EvidenceCertificate,
     contract: AcceptanceContract,
+    decoded_evidence: AcceptanceEvidence | None,
 ) -> CertificateVerificationResult:
     if certificate.certificate_digest != certificate.expected_digest():
         return CertificateVerificationResult(False, False, "integrity:certificate_digest")
@@ -41,7 +43,21 @@ def verify_certificate(
 
     try:
         grid = PhysicalGrid(certificate.mpp_x, certificate.mpp_y)
-        candidate = compute_acceptance_evidence(decoded, grid, contract)
+        candidate = decoded_evidence or compute_acceptance_evidence(decoded, grid, contract)
+        evidence_document = {
+            "version": candidate.version,
+            "mpp": [grid.mpp_x, grid.mpp_y],
+            "groups": candidate.groups,
+        }
+        if (
+            candidate.version != contract.version
+            or candidate.sha256
+            != hashlib.sha256(canonical_json_bytes(evidence_document)).hexdigest()
+            or candidate.sha256 != certificate.decoded_evidence_sha256
+        ):
+            return CertificateVerificationResult(
+                False, False, "integrity:decoded_evidence_digest"
+            )
         candidate_groups = dict(candidate.groups)
         tolerance = {
             "nuclear_objects": contract.nuclear_relative_tolerance,
@@ -73,3 +89,21 @@ def verify_certificate(
     except (KeyError, TypeError, ValueError, OverflowError):
         return CertificateVerificationResult(False, False, "integrity:reference_payload")
     return CertificateVerificationResult(True, False)
+
+
+def verify_certificate(
+    decoded_rgb: np.ndarray,
+    certificate: EvidenceCertificate,
+    contract: AcceptanceContract,
+) -> CertificateVerificationResult:
+    return _verify_certificate(decoded_rgb, certificate, contract, None)
+
+
+def verify_encoder_certificate_with_evidence(
+    decoded_rgb: np.ndarray,
+    certificate: EvidenceCertificate,
+    contract: AcceptanceContract,
+    decoded_evidence: AcceptanceEvidence,
+) -> CertificateVerificationResult:
+    """Verify encoder-built certificate using evidence computed for same pixels."""
+    return _verify_certificate(decoded_rgb, certificate, contract, decoded_evidence)

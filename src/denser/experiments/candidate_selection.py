@@ -7,7 +7,10 @@ from dataclasses import dataclass
 import numpy as np
 
 from denser.certificates.encode import build_certificate, decode_certificate, encode_certificate
-from denser.certificates.verify import verify_certificate
+from denser.certificates.verify import (
+    verify_certificate,
+    verify_encoder_certificate_with_evidence,
+)
 from denser.codecs.base import EncodedCandidate
 from denser.codecs.lossless import SharedLosslessCodec
 from denser.codecs.registry import CodecRegistry
@@ -77,7 +80,9 @@ def _packet_for(
         reference_evidence=reference_evidence,
         decoded_evidence=decoded_evidence,
     )
-    if not verify_certificate(decoded, certificate, contract).passed:
+    if not verify_encoder_certificate_with_evidence(
+        decoded, certificate, contract, decoded_evidence
+    ).passed:
         raise RuntimeError("encoder-created certificate failed immediate verification")
     tile_packet = McV2TilePacket(
         candidate.codec_id,

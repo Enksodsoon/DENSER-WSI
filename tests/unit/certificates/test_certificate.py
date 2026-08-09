@@ -13,7 +13,10 @@ from denser.certificates.encode import (
     encode_certificate,
 )
 from denser.certificates.models import build_reference_payload
-from denser.certificates.verify import verify_certificate
+from denser.certificates.verify import (
+    verify_certificate,
+    verify_encoder_certificate_with_evidence,
+)
 from denser.evidence.architecture import compute_acceptance_evidence
 from denser.evidence.types import AcceptanceContract, PhysicalGrid
 from denser.method.candidates import CandidateProfile, build_uniform_candidates, decode_candidate
@@ -101,3 +104,31 @@ def test_precomputed_evidence_produces_identical_certificate_and_verification() 
     )
     assert reused == baseline
     assert verify_certificate(decoded, reused, contract()).passed
+
+
+def test_encoder_certificate_verification_reuses_bound_decoded_evidence(
+    monkeypatch,
+) -> None:
+    source = source_rgb()
+    candidate = accepted_candidate()
+    decoded = decode_candidate(candidate.payload, candidate.allocation_map)
+    grid = PhysicalGrid(0.25, 0.25)
+    decoded_evidence = compute_acceptance_evidence(decoded, grid, contract())
+    certificate = build_certificate(
+        source,
+        candidate,
+        contract(),
+        physical_grid=grid,
+        decoded_rgb=decoded,
+        decoded_evidence=decoded_evidence,
+    )
+
+    def unexpected(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("encoder verification must not re-extract bound evidence")
+
+    monkeypatch.setattr(
+        "denser.certificates.verify.compute_acceptance_evidence", unexpected
+    )
+    assert verify_encoder_certificate_with_evidence(
+        decoded, certificate, contract(), decoded_evidence
+    ).passed
