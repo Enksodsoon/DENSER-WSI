@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
@@ -95,10 +96,13 @@ def select_smallest_accepted_candidate(
     cell_size_px: int,
     halo_um: float = 2.0,
     prepared_verifier: PreparedLocalizedAcceptanceVerifier | None = None,
+    max_candidate_workers: int = 1,
 ) -> AcceptedTileCandidate:
     source = np.asarray(source_rgb)
     if source.dtype != np.uint8 or source.ndim != 3 or source.shape[2] != 3:
         raise ValueError("candidate selection requires a uint8 RGB tile")
+    if not 1 <= max_candidate_workers <= 6:
+        raise ValueError("candidate workers must remain between one and six")
     if prepared_verifier is None:
         prepared_verifier = LocalizedAcceptanceVerifier(
             contract, cell_size_px, grid
@@ -154,16 +158,13 @@ def select_smallest_accepted_candidate(
         if initial_bound is not None
         else ordered
     )
-    for index, candidate in enumerate(evaluation_order):
-        if packet_lower_bound(candidate) > best_complete_bytes:
-            if index == 0 and candidate is initial_bound:
-                continue
-            break
+    def evaluate_candidate(
+        candidate: EncodedCandidate, maximum_complete_bytes: int
+    ) -> AcceptedTileCandidate | None:
         try:
             decoded = registry.decode(candidate, source.shape)
         except (OSError, RuntimeError, ValueError):
-            rejected.append(candidate.profile_id)
-            continue
+            return None
         repair_payload = b""
         status = "verified"
         exact = np.array_equal(source, decoded)
@@ -181,23 +182,57 @@ def select_smallest_accepted_candidate(
                 encoded_fallback=fallback,
                 fallback_decoded=fallback_decoded,
                 maximum_repair_bytes=max(
-                    0, best_complete_bytes - packet_lower_bound(candidate)
+                    0, maximum_complete_bytes - packet_lower_bound(candidate)
                 ),
             )
             if repair.status != "verified_repair":
-                rejected.append(candidate.profile_id)
-                continue
+                return None
             decoded = repair.decoded
             repair_payload = repair.payload
             status = repair.status
         packet, breakdown = _packet_for(
             source, candidate, decoded, repair_payload, contract, grid, fallback=False
         )
-        result = AcceptedTileCandidate(
+        return AcceptedTileCandidate(
             candidate, decoded, repair_payload, packet, breakdown, status, ()
         )
-        accepted.append((len(packet), candidate.profile_id, result))
-        best_complete_bytes = min(best_complete_bytes, len(packet))
+
+    if max_candidate_workers == 1:
+        for index, candidate in enumerate(evaluation_order):
+            if packet_lower_bound(candidate) > best_complete_bytes:
+                if index == 0 and candidate is initial_bound:
+                    continue
+                break
+            result = evaluate_candidate(candidate, best_complete_bytes)
+            if result is None:
+                rejected.append(candidate.profile_id)
+                continue
+            accepted.append((len(result.packet), candidate.profile_id, result))
+            best_complete_bytes = min(best_complete_bytes, len(result.packet))
+    else:
+        eligible = [
+            candidate
+            for candidate in ordered
+            if packet_lower_bound(candidate) <= best_complete_bytes
+        ]
+        if eligible:
+            prepared_verifier.prepare_cells()
+            with ThreadPoolExecutor(
+                max_workers=min(max_candidate_workers, len(eligible))
+            ) as pool:
+                evaluated = list(
+                    pool.map(
+                        lambda candidate: evaluate_candidate(
+                            candidate, best_complete_bytes
+                        ),
+                        eligible,
+                    )
+                )
+            for candidate, result in zip(eligible, evaluated, strict=True):
+                if result is None:
+                    rejected.append(candidate.profile_id)
+                else:
+                    accepted.append((len(result.packet), candidate.profile_id, result))
 
     fallback_result = AcceptedTileCandidate(
         fallback,

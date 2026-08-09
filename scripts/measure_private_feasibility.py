@@ -126,6 +126,7 @@ def _measure_selection(
     contract: object,
     grid: PhysicalGrid,
     prepared_verifier: PreparedLocalizedAcceptanceVerifier,
+    candidate_workers: int = 1,
 ) -> tuple[AcceptedTileCandidate, float]:
     started = time.perf_counter()
     selected = select_smallest_accepted_candidate(
@@ -136,6 +137,7 @@ def _measure_selection(
         grid,
         cell_size_px=max(1, round(8.0 / grid.mean_mpp)),
         prepared_verifier=prepared_verifier,
+        max_candidate_workers=candidate_workers,
     )
     return selected, time.perf_counter() - started
 
@@ -172,6 +174,7 @@ def main() -> int:
     parser.add_argument("--tiles-per-slide", type=int, default=8)
     parser.add_argument("--seed", type=int, default=20260808)
     parser.add_argument("--worker-count", type=int, default=2)
+    parser.add_argument("--candidate-workers", type=int, default=6)
     parser.add_argument("--host-reserve-bytes", type=int, required=True)
     parser.add_argument("--preflight-free-disk-bytes", type=int, required=True)
     arguments = parser.parse_args()
@@ -203,7 +206,7 @@ def main() -> int:
         "results",
         "development",
         "generation-1",
-        f"feasibility-source-extension-{arguments.tiles_per_slide}.private.json",
+        f"feasibility-source-extension-{arguments.tiles_per_slide}-w{arguments.candidate_workers}.private.json",
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     identity = {
@@ -214,6 +217,7 @@ def main() -> int:
         "sampling_design": "sha256-uniform-level0-without-replacement-v1",
         "sampling_seed": arguments.seed,
         "tiles_per_slide": arguments.tiles_per_slide,
+        "candidate_workers": arguments.candidate_workers,
     }
     document: dict[str, object] = {**identity, "samples": []}
     if output.exists():
@@ -263,6 +267,7 @@ def main() -> int:
                         contract,
                         grid,
                         prepared_verifier,
+                        arguments.candidate_workers,
                     )
                     started = time.perf_counter()
                     uniform_candidates = build_uniform_candidates(rgb, profile)
@@ -274,6 +279,7 @@ def main() -> int:
                         contract,
                         grid,
                         prepared_verifier,
+                        arguments.candidate_workers,
                     )
                     started = time.perf_counter()
                     source_candidates = [

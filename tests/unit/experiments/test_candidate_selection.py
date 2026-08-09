@@ -216,3 +216,35 @@ def test_standard_portfolio_uses_frozen_jpeg90_as_initial_byte_bound() -> None:
     )
     assert calls[0] == "jpeg-q90-444-opt"
     assert selected.candidate.profile_id == "smaller-pass"
+
+
+def test_parallel_candidate_evaluation_is_deterministic_and_matches_serial() -> None:
+    source = np.random.default_rng(77).integers(0, 256, (16, 16, 3), dtype=np.uint8)
+    registry = CodecRegistry()
+    registry.register(
+        "fixture",
+        lambda payload, allocation, shape, profile: (
+            source.copy() if profile in {"accepted-a", "accepted-b"} else np.zeros(shape, dtype=np.uint8)
+        ),
+    )
+    candidates = [
+        _candidate("rejected", b"r"),
+        _candidate("accepted-b", b"b" * 16),
+        _candidate("accepted-a", b"a" * 8),
+    ]
+    arguments = (
+        source,
+        candidates,
+        registry,
+        AcceptanceContract(),
+        PhysicalGrid(0.25, 0.25),
+    )
+    serial = select_smallest_accepted_candidate(*arguments, cell_size_px=8)
+    parallel = select_smallest_accepted_candidate(
+        *arguments, cell_size_px=8, max_candidate_workers=3
+    )
+    repeated = select_smallest_accepted_candidate(
+        *arguments, cell_size_px=8, max_candidate_workers=3
+    )
+    assert parallel.candidate.profile_id == serial.candidate.profile_id
+    assert parallel.packet == serial.packet == repeated.packet

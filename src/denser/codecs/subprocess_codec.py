@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
+from threading import BoundedSemaphore
 
 import numpy as np
 from PIL import Image
@@ -17,6 +18,9 @@ from denser.toolchain.probe import ToolSpec, probe_tool
 
 class CodecExecutionError(RuntimeError):
     """An isolated native codec process violated its execution contract."""
+
+
+_NATIVE_CODEC_PROCESS_SLOTS = BoundedSemaphore(2)
 
 
 class SubprocessCodec(ABC):
@@ -44,15 +48,16 @@ class SubprocessCodec(ABC):
             raise CodecExecutionError(f"executable_not_found:{command[0]}")
         safe_command = [executable, *command[1:]]
         try:
-            completed = subprocess.run(
-                safe_command,
-                shell=False,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout_seconds,
-                cwd=root,
-            )
+            with _NATIVE_CODEC_PROCESS_SLOTS:
+                completed = subprocess.run(
+                    safe_command,
+                    shell=False,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout_seconds,
+                    cwd=root,
+                )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise CodecExecutionError(f"codec_process_failed:{command[0]}") from error
         if completed.returncode != 0:
