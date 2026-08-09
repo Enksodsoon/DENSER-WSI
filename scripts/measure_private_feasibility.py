@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from contextlib import AbstractContextManager
 from dataclasses import asdict
+import hashlib
 import json
 import math
 import os
@@ -14,7 +15,11 @@ import numpy as np
 
 from denser.codecs.registry import build_default_registry
 from denser.codecs.source_segments import build_source_segment_candidate_from_svs
-from denser.codecs.standard import StandardLadder, build_standard_candidates
+from denser.codecs.standard import (
+    StandardLadder,
+    build_standard_candidates,
+    ladder_from_profile_ids,
+)
 from denser.core.canonical import canonical_json_bytes
 from denser.core.models import TileAddress
 from denser.data.private_cohort import bind_verified_partition_sources
@@ -175,12 +180,36 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=20260808)
     parser.add_argument("--worker-count", type=int, default=2)
     parser.add_argument("--candidate-workers", type=int, default=6)
+    parser.add_argument("--use-standard-routing", action="store_true")
     parser.add_argument("--host-reserve-bytes", type=int, required=True)
     parser.add_argument("--preflight-free-disk-bytes", type=int, required=True)
     arguments = parser.parse_args()
     if arguments.tiles_per_slide <= 0:
         raise ValueError("sampling counts must be positive")
     layout = RunLayout(arguments.repo_root, arguments.run_root)
+    routing: dict[str, tuple[str, ...]] | None = None
+    routing_digest = "full-standard-ladder"
+    if arguments.use_standard_routing:
+        routing_path = layout.resolve(
+            "manifests", "generation-1-standard-routing.private.json"
+        )
+        routing_bytes = routing_path.read_bytes()
+        routing_document = json.loads(routing_bytes)
+        if routing_document.get("version") != "DENSER-standard-routing-1":
+            raise ValueError("private standard routing version is invalid")
+        route_values = routing_document.get("routes")
+        if not isinstance(route_values, dict):
+            raise ValueError("private standard routing has no routes")
+        routing = {
+            str(project): tuple(str(profile) for profile in profiles)
+            for project, profiles in route_values.items()
+            if isinstance(profiles, list)
+        }
+        if len(routing) != len(route_values):
+            raise ValueError("private standard routing contains an invalid route")
+        for profiles in routing.values():
+            ladder_from_profile_ids(profiles)
+        routing_digest = hashlib.sha256(routing_bytes).hexdigest()
     manifest = json.loads(
         layout.resolve("manifests", "selected-sources.private.json").read_text(encoding="utf-8")
     )
@@ -206,7 +235,7 @@ def main() -> int:
         "results",
         "development",
         "generation-1",
-        f"feasibility-source-extension-{arguments.tiles_per_slide}-w{arguments.candidate_workers}.private.json",
+        f"feasibility-source-extension-{arguments.tiles_per_slide}-w{arguments.candidate_workers}-{'routed' if routing else 'full'}.private.json",
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     identity = {
@@ -218,6 +247,7 @@ def main() -> int:
         "sampling_seed": arguments.seed,
         "tiles_per_slide": arguments.tiles_per_slide,
         "candidate_workers": arguments.candidate_workers,
+        "standard_routing_digest": routing_digest,
     }
     document: dict[str, object] = {**identity, "samples": []}
     if output.exists():
@@ -258,7 +288,14 @@ def main() -> int:
                         grid,
                     ).prepare(rgb)
                     started = time.perf_counter()
-                    standard_candidates = build_standard_candidates(rgb, StandardLadder())
+                    standard_ladder = (
+                        ladder_from_profile_ids(routing[row.project_id])
+                        if routing is not None and row.project_id in routing
+                        else StandardLadder()
+                    )
+                    if routing is not None and row.project_id not in routing:
+                        raise ValueError("private standard routing is missing a project")
+                    standard_candidates = build_standard_candidates(rgb, standard_ladder)
                     standard_build = time.perf_counter() - started
                     standard, standard_select = _measure_selection(
                         rgb,

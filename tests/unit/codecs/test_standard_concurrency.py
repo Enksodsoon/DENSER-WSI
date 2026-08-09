@@ -9,7 +9,11 @@ import numpy as np
 import denser.codecs.standard as standard
 import denser.codecs.subprocess_codec as subprocess_codec
 from denser.codecs.base import EncodedCandidate
-from denser.codecs.standard import StandardLadder, build_standard_candidates
+from denser.codecs.standard import (
+    StandardLadder,
+    build_standard_candidates,
+    ladder_from_profile_ids,
+)
 from denser.core.models import ByteBreakdown
 
 
@@ -97,3 +101,14 @@ def test_native_codec_runner_caps_parallel_encode_and_decode_processes(
     with ThreadPoolExecutor(max_workers=6) as pool:
         list(pool.map(lambda _index: codec._run(["codec"], tmp_path), range(6)))
     assert maximum == 2
+
+
+def test_standard_ladder_can_be_frozen_from_canonical_profile_ids() -> None:
+    ladder = ladder_from_profile_ids(("avif-q90-s6", "jpeg2000-r4"))
+    assert ladder == StandardLadder((), (4,), (), (90,))
+    import pytest
+
+    with pytest.raises(ValueError, match="unknown"):
+        ladder_from_profile_ids(("webp-q90",))
+    with pytest.raises(ValueError, match="duplicate"):
+        ladder_from_profile_ids(("avif-q90-s6", "avif-q90-s6"))
