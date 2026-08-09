@@ -17,6 +17,22 @@
 - HE-V1 calibration and all downstream sampled phases must be rerun from the
   corrected primary-band implementation before any automatic freeze.
 
+## 2026-08-09 — Generation 1 archived before freeze
+
+- A bounded random-access TIFF metadata preflight followed remote first-directory
+  offsets and read 14,985 aggregate bytes across the sealed final partition. It
+  decoded no pixels and inspected no compression outcomes.
+- Fifteen of eighteen final sources were in the 0.20–0.30 micrometre-per-pixel
+  primary band; three were at 0.5015. Generation 1 therefore cannot satisfy the
+  predeclared minimum of 18 evaluable final slides and is classified
+  `not_evaluable` before freeze.
+- No final slide was compressed, no Generation 1 freeze was written, and no
+  compression or novelty conclusion is drawn. The partially started source
+  downloads remain private and resumable.
+- The next generation must exclude every Generation 1 case and verify physical
+  scale from bounded metadata reads before assigning partitions. This is a
+  cohort-integrity correction, not a mechanism change or outcome-driven retune.
+
 ## 2026-08-08 — Audited reconstruction
 
 - Original ZIP and bundle unavailable; reconstruct from authenticated plan.
