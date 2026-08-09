@@ -19,7 +19,7 @@ def main() -> int:
     parser.add_argument("--generation", type=int, default=1)
     arguments = parser.parse_args()
     layout = RunLayout(arguments.repo_root, arguments.run_root)
-    with PrivateRunLock(layout, "download"):
+    with PrivateRunLock(layout, f"download-generation-{arguments.generation}"):
         records = download_manifest_partition(
             arguments.manifest,
             layout,

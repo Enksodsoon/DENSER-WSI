@@ -47,6 +47,23 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
+def _pid_identity(pid: int) -> str:
+    """Return a namespace-local process birth marker when the OS exposes one."""
+
+    if sys.platform.startswith("linux"):
+        try:
+            raw = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+            fields_after_name = raw.rsplit(")", 1)[1].split()
+            start_ticks = fields_after_name[19]
+            boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(
+                encoding="ascii"
+            ).strip()
+            return f"linux:{boot_id}:{start_ticks}"
+        except (OSError, IndexError):
+            pass
+    return f"pid:{pid}"
+
+
 @dataclass(frozen=True, slots=True)
 class RunLayout:
     repo_root: Path
@@ -89,17 +106,22 @@ class PrivateRunLock:
             raise ValueError("private lock name is invalid")
         self.layout.ensure()
         path = self.layout.resolve("checkpoints", f"{self.name}.lock")
-        token = f"{os.getpid()}\n"
+        pid = os.getpid()
+        token = f"{pid}|{_pid_identity(pid)}\n"
         for _attempt in range(2):
             try:
                 descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             except FileExistsError:
                 try:
-                    pid = int(path.read_text(encoding="ascii").strip())
+                    lock_token = path.read_text(encoding="ascii").strip()
+                    pid_text, separator, identity = lock_token.partition("|")
+                    locked_pid = int(pid_text)
                 except (OSError, ValueError):
                     path.unlink(missing_ok=True)
                     continue
-                if not _pid_is_alive(pid):
+                if not _pid_is_alive(locked_pid) or (
+                    separator and _pid_identity(locked_pid) != identity
+                ):
                     path.unlink(missing_ok=True)
                     continue
                 raise RuntimeError(f"private {self.name} writer is already active")

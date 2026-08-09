@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -47,3 +48,15 @@ def test_private_run_lock_prevents_concurrent_writer(tmp_path: Path) -> None:
                 pass
     with PrivateRunLock(layout, "download"):
         pass
+
+
+def test_private_run_lock_reclaims_same_pid_from_foreign_container(tmp_path: Path) -> None:
+    repo, run = tmp_path / "repo", tmp_path / "run"
+    repo.mkdir()
+    layout = RunLayout(repo, run)
+    layout.ensure()
+    lock = layout.resolve("checkpoints", "download.lock")
+    lock.write_text(f"{os.getpid()}|foreign-process-identity\n", encoding="ascii")
+    with PrivateRunLock(layout, "download"):
+        assert lock.exists()
+    assert not lock.exists()
