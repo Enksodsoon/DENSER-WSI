@@ -57,6 +57,7 @@ class FinalHoldoutConfig:
     methods: tuple[str, ...] = ("standard", "uniform", "denser")
     candidate_steps: tuple[float, ...] = (1.0, 2.0, 4.0)
     cpu_workers: int = 6
+    candidate_workers: int = 6
     max_codec_subprocesses: int = 2
     standard_ladder: StandardLadder = StandardLadder()
     standard_builder: Callable[[np.ndarray, StandardLadder], list[EncodedCandidate]] = build_standard_candidates
@@ -81,6 +82,8 @@ class FinalHoldoutConfig:
             raise ValueError("source-extension final method requires a bound candidate builder")
         if not 1 <= self.cpu_workers <= 6:
             raise ValueError("final CPU workers must be between one and six")
+        if not 1 <= self.candidate_workers <= 6:
+            raise ValueError("final candidate workers must be between one and six")
         if not 1 <= self.max_codec_subprocesses <= 2:
             raise ValueError("final codec subprocesses must be one or two")
         if self.checkpoint_interval_tiles <= 0:
@@ -383,6 +386,7 @@ def run_final_holdout(
                         if method == "denser" and slide.source_candidate_builder is not None
                         else None
                     ),
+                    max_candidate_workers=config.candidate_workers,
                 )
                 if method == "standard":
                     standard_selected = selected

@@ -42,6 +42,7 @@ def main() -> int:
     parser.add_argument("--generation", type=int, required=True)
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--codec-subprocesses", type=int, default=2)
+    parser.add_argument("--candidate-workers", type=int, default=6)
     parser.add_argument("--tiles-per-slide", type=int, default=8)
     parser.add_argument("--repeats", type=int, default=2)
     parser.add_argument("--seed", type=int, default=20260808)
@@ -50,6 +51,8 @@ def main() -> int:
         raise ValueError("parallel scaling workers must be between three and six")
     if not 1 <= arguments.codec_subprocesses <= 2:
         raise ValueError("codec subprocesses must be one or two")
+    if not 1 <= arguments.candidate_workers <= 6:
+        raise ValueError("candidate workers must be between one and six")
     if arguments.tiles_per_slide < 8 or arguments.repeats < 2:
         raise ValueError("scaling requires at least eight tiles per slide and two repeats")
 
@@ -133,7 +136,7 @@ def main() -> int:
             grid,
             verifier,
             prepared,
-            candidate_workers=1,
+            candidate_workers=arguments.candidate_workers,
         )
         source_candidate = build_source_segment_candidate_from_svs(source_path, address)
         denser, _seconds = _measure_selection(
@@ -145,7 +148,7 @@ def main() -> int:
             verifier,
             prepared,
             incumbent=standard,
-            candidate_workers=1,
+            candidate_workers=arguments.candidate_workers,
         )
         return standard.packet, denser.packet
 
@@ -207,6 +210,7 @@ def main() -> int:
         "sampling_seed": arguments.seed,
         "workers": arguments.workers,
         "codec_subprocesses": arguments.codec_subprocesses,
+        "candidate_workers": arguments.candidate_workers,
         "benchmark_tiles": benchmark_tiles,
         "project_batches": len(work_batches),
         "repeats": arguments.repeats,

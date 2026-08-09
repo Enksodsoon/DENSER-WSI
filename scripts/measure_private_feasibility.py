@@ -266,6 +266,7 @@ def main() -> int:
             "routing_digest": routing_digest,
             "workers": arguments.worker_count,
             "codec_subprocesses": 2,
+            "candidate_workers": arguments.candidate_workers,
             "packets_equal": True,
             "source_data_processed": True,
         }
