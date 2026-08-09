@@ -60,16 +60,27 @@ def main() -> int:
     parser.add_argument("--tiles-per-slide", type=int, default=4)
     parser.add_argument("--search-grid", type=int, default=5)
     parser.add_argument("--seed", type=int, default=20260808)
+    parser.add_argument("--generation", type=int, default=1)
+    parser.add_argument("--manifest", type=Path)
     arguments = parser.parse_args()
+    if arguments.generation <= 0:
+        raise ValueError("generation must be positive")
     layout = RunLayout(arguments.repo_root, arguments.run_root)
     control_path = arguments.repo_root / "configs" / "experiment" / "he_v1_controls.json"
     control_document = json.loads(control_path.read_text(encoding="utf-8"))
     verify_control_configuration(control_document)
+    manifest_path = arguments.manifest or layout.resolve(
+        "manifests",
+        "selected-sources.private.json"
+        if arguments.generation == 1
+        else f"generation-{arguments.generation}-selected-sources.private.json",
+    )
     sources = bind_verified_partition_sources(
-        layout.resolve("manifests", "selected-sources.private.json"),
+        manifest_path,
         layout,
         "development",
         expected_count=6,
+        generation=arguments.generation,
     )
     sampled_slides: list[list[tuple[np.ndarray, str, PhysicalGrid]]] = []
     metadata_exclusions: list[dict[str, object]] = []
@@ -105,6 +116,7 @@ def main() -> int:
     audit = verify_calibration(calibration, list(harmful))
     document: dict[str, object] = {
         "version": "DENSER-private-development-calibration-2-primary-mpp-band",
+        "generation": arguments.generation,
         "selected_slide_count": len(sources),
         "slide_count": len(sampled_slides),
         "phase_classification": "not_evaluable" if metadata_exclusions else "evaluable",
@@ -118,7 +130,12 @@ def main() -> int:
         document["acceptance_contract"] = asdict(
             acceptance_contract_from_calibration(calibration)
         )
-    output = layout.resolve("results", "development", "generation-1", "calibration-record.json")
+    output = layout.resolve(
+        "results",
+        "development",
+        f"generation-{arguments.generation}",
+        "calibration-record.json",
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(canonical_json_bytes(document) + b"\n")
     print(

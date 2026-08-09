@@ -24,6 +24,14 @@ class VerifiedPrivateSource:
     path: Path
 
 
+def _source_parts(generation: int, partition: str) -> tuple[str, ...]:
+    if generation <= 0:
+        raise ValueError("generation must be positive")
+    if generation == 1:
+        return ("sources", partition)
+    return ("sources", f"generation-{generation}", partition)
+
+
 def _record(row: dict[str, object]) -> GdcSlideRecord:
     required = {
         "access",
@@ -96,6 +104,7 @@ def bind_verified_partition_sources(
     partition: str,
     *,
     expected_count: int,
+    generation: int = 1,
 ) -> tuple[VerifiedPrivateSource, ...]:
     """Resolve an exact, integrity-checked private source set from its manifest."""
     if partition not in {"development", "pilot", "tuning", "final"}:
@@ -118,9 +127,10 @@ def bind_verified_partition_sources(
         raise RuntimeError("private partition research identifiers are not unique")
     if len({record.case_id for record in records}) != len(records):
         raise RuntimeError("private partition cases are not disjoint")
-    source_root = layout.resolve("sources", partition)
+    source_parts = _source_parts(generation, partition)
+    source_root = layout.resolve(*source_parts)
     expected_paths = tuple(
-        layout.resolve("sources", partition, f"{record.research_id}.svs")
+        layout.resolve(*source_parts, f"{record.research_id}.svs")
         for record in records
     )
     observed_paths = set(source_root.glob("*.svs")) if source_root.exists() else set()
@@ -142,6 +152,7 @@ def download_manifest_partition(
     max_files: int | None = None,
     max_attempts_per_file: int = 12,
     max_concurrent_files: int = 1,
+    generation: int = 1,
     download_fn: DownloadFunction = download_verified,
 ) -> tuple[DownloadRecord, ...]:
     if partition not in {"development", "pilot", "tuning", "final"}:
@@ -165,16 +176,19 @@ def download_manifest_partition(
             raise ValueError("max_files must be positive")
         selected = selected[:max_files]
     records = tuple(_record(row) for row in selected)
+    source_parts = _source_parts(generation, partition)
 
     def acquire(record: GdcSlideRecord) -> DownloadRecord:
         if record.access != "open":
             raise ValueError("only open-access cohort records may be downloaded")
-        destination = layout.resolve("sources", partition, f"{record.research_id}.svs")
+        destination = layout.resolve(*source_parts, f"{record.research_id}.svs")
         destination.parent.mkdir(parents=True, exist_ok=True)
         existing = _verify_existing(record, destination)
         if existing is None:
             if destination.exists():
-                quarantine = layout.resolve("quarantine", f"{record.research_id}.invalid")
+                quarantine = layout.resolve(
+                    "quarantine", f"generation-{generation}-{record.research_id}.invalid"
+                )
                 destination.replace(quarantine)
             last_error: OSError | RuntimeError | None = None
             for _attempt in range(max_attempts_per_file):
@@ -194,7 +208,12 @@ def download_manifest_partition(
             result = future.result()
             completed[result.research_id] = result
             _write_ledger(
-                layout.resolve("checkpoints", "download-ledger.private.json"),
+                layout.resolve(
+                    "checkpoints",
+                    "download-ledger.private.json"
+                    if generation == 1
+                    else f"download-ledger-generation-{generation}.private.json",
+                ),
                 [completed[key] for key in sorted(completed)],
             )
     return tuple(completed[record.research_id] for record in records)

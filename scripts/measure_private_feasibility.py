@@ -180,15 +180,25 @@ def main() -> int:
     parser.add_argument("--exclude-missing-scale", action="store_true")
     parser.add_argument("--host-reserve-bytes", type=int, required=True)
     parser.add_argument("--preflight-free-disk-bytes", type=int, required=True)
+    parser.add_argument("--generation", type=int, default=1)
+    parser.add_argument("--manifest", type=Path)
     arguments = parser.parse_args()
     if arguments.tiles_per_slide <= 0:
         raise ValueError("sampling counts must be positive")
+    if arguments.generation <= 0:
+        raise ValueError("generation must be positive")
     layout = RunLayout(arguments.repo_root, arguments.run_root)
+    manifest_path = arguments.manifest or layout.resolve(
+        "manifests",
+        "selected-sources.private.json"
+        if arguments.generation == 1
+        else f"generation-{arguments.generation}-selected-sources.private.json",
+    )
     routing: dict[str, tuple[str, ...]] | None = None
     routing_digest = "full-standard-ladder"
     if arguments.use_standard_routing:
         routing_path = layout.resolve(
-            "manifests", "generation-1-standard-routing.private.json"
+            "manifests", f"generation-{arguments.generation}-standard-routing.private.json"
         )
         routing_bytes = routing_path.read_bytes()
         routing_document = json.loads(routing_bytes)
@@ -207,21 +217,23 @@ def main() -> int:
         for profiles in routing.values():
             ladder_from_profile_ids(profiles)
         routing_digest = hashlib.sha256(routing_bytes).hexdigest()
-    manifest = json.loads(
-        layout.resolve("manifests", "selected-sources.private.json").read_text(encoding="utf-8")
-    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     final_rows = [row for row in manifest["rows"] if row["partition"] == "final"]
     if arguments.partition == "development" and len(final_rows) < 18:
         raise RuntimeError("reduced development and final cohorts are incomplete")
     partition_sources = bind_verified_partition_sources(
-        layout.resolve("manifests", "selected-sources.private.json"),
+        manifest_path,
         layout,
         arguments.partition,
         expected_count=6,
+        generation=arguments.generation,
     )
     calibration_document = json.loads(
         layout.resolve(
-            "results", "development", "generation-1", "calibration-record.json"
+            "results",
+            "development",
+            f"generation-{arguments.generation}",
+            "calibration-record.json",
         ).read_text(encoding="utf-8")
     )
     if calibration_document["harmful_control_audit"]["status"] != "calibrated":
@@ -231,12 +243,13 @@ def main() -> int:
     output = layout.resolve(
         "results",
         arguments.partition,
-        "generation-1",
+        f"generation-{arguments.generation}",
         f"feasibility-{arguments.partition}-source-extension-primary-band-{arguments.tiles_per_slide}-w{arguments.candidate_workers}-{'route-' + routing_digest[:12] if routing else 'full'}-{'scale-filtered' if arguments.exclude_missing_scale else 'strict'}.private.json",
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     identity = {
         "version": "DENSER-private-feasibility-source-extension-3-primary-mpp-band",
+        "generation": arguments.generation,
         "code_commit": arguments.code_commit,
         "image_digest": arguments.image_digest,
         "calibration_digest": calibration.sha256,

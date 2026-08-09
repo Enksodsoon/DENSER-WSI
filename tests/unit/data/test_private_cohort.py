@@ -154,6 +154,40 @@ def test_verified_partition_binding_rejects_same_size_corruption(tmp_path: Path)
         bind_verified_partition_sources(manifest, layout, "development", expected_count=1)
 
 
+def test_generation_two_sources_are_isolated_from_generation_one(tmp_path: Path) -> None:
+    repo, run = tmp_path / "repo", tmp_path / "run"
+    repo.mkdir()
+    layout = RunLayout(repo, run)
+    layout.ensure()
+    payload = b"slide"
+    md5 = hashlib.md5(payload, usedforsecurity=False).hexdigest()
+    row = {
+        "access": "open", "case_id": "case-2", "file_name": "slide.svs",
+        "file_size": len(payload), "file_uuid": "file-2", "md5": md5,
+        "partition": "development", "project_id": "TCGA-X",
+        "research_id": "RS-generation-2", "source_url": "https://example.invalid",
+    }
+    manifest = layout.resolve("manifests", "generation-2.private.json")
+    manifest.write_text(json.dumps({"rows": [row]}), encoding="utf-8")
+
+    def fake_download(record, destination):  # type: ignore[no-untyped-def]
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload)
+        return DownloadRecord(
+            record.research_id, str(destination), len(payload), md5,
+            hashlib.sha256(payload).hexdigest(), True,
+        )
+
+    download_manifest_partition(
+        manifest, layout, "development", generation=2, download_fn=fake_download
+    )
+    bound = bind_verified_partition_sources(
+        manifest, layout, "development", expected_count=1, generation=2
+    )
+    assert bound[0].path.is_relative_to(layout.resolve("sources", "generation-2"))
+    assert not layout.resolve("sources", "development", "RS-generation-2.svs").exists()
+
+
 def test_partition_downloader_bounds_distinct_file_concurrency(tmp_path: Path) -> None:
     repo, run = tmp_path / "repo", tmp_path / "run"
     repo.mkdir()

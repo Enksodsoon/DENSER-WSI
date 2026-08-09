@@ -16,6 +16,7 @@ def main() -> int:
     parser.add_argument("--partition", choices=("development", "pilot", "tuning", "final"), required=True)
     parser.add_argument("--max-files", type=int)
     parser.add_argument("--max-concurrent-files", type=int, choices=(1, 2), default=2)
+    parser.add_argument("--generation", type=int, default=1)
     arguments = parser.parse_args()
     layout = RunLayout(arguments.repo_root, arguments.run_root)
     with PrivateRunLock(layout, "download"):
@@ -25,6 +26,7 @@ def main() -> int:
             arguments.partition,
             max_files=arguments.max_files,
             max_concurrent_files=arguments.max_concurrent_files,
+            generation=arguments.generation,
         )
     # Intentionally emit counts and sizes only: identifiers and paths stay private.
     print(json.dumps({"downloaded_or_verified": len(records), "verified_bytes": sum(row.byte_count for row in records)}))
