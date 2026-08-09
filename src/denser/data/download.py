@@ -14,7 +14,7 @@ class DownloadIntegrityError(RuntimeError):
     """Downloaded bytes failed an immutable source check."""
 
 
-_RANGE_BYTES = 8 * 1024 * 1024
+_RANGE_BYTES = 64 * 1024 * 1024
 _HTTP_TIMEOUT_SECONDS = 30
 
 

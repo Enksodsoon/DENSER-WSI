@@ -12,6 +12,12 @@ from denser.data.gdc import GdcResponseError, build_gdc_query, query_open_he_sli
 from denser.data.models import GdcSlideRecord
 
 
+def test_download_range_is_large_enough_for_high_volume_wsi_acquisition() -> None:
+    import denser.data.download as module
+
+    assert module._RANGE_BYTES == 64 * 1024 * 1024
+
+
 def test_query_requires_open_released_slide_images() -> None:
     query = build_gdc_query(("TCGA-LUAD",))
     assert query.filters_access == "open"
