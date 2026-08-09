@@ -16,22 +16,30 @@ class CellAcceptanceBatch:
     groups: tuple[tuple[str, np.ndarray], ...]
 
 
-def _cells(values: np.ndarray, size: int) -> np.ndarray:
+def _cells(values: np.ndarray, cell_height: int, cell_width: int) -> np.ndarray:
     height, width = values.shape[:2]
     trailing = values.shape[2:]
     return values.reshape(
-        height // size, size, width // size, size, *trailing
+        height // cell_height,
+        cell_height,
+        width // cell_width,
+        cell_width,
+        *trailing,
     ).transpose(0, 2, 1, 3, *range(4, 4 + len(trailing)))
 
 
-def _component_groups(mask: np.ndarray, size: int) -> dict[int, list[tuple[int, int, int, bool]]]:
+def _component_groups(
+    mask: np.ndarray, cell_height: int, cell_width: int
+) -> dict[int, list[tuple[int, int, int, bool]]]:
     height, width = mask.shape
-    rows, columns = height // size, width // size
-    cell_masks = _cells(mask, size)
-    separated = np.zeros((rows, size + 1, columns, size + 1), dtype=np.bool_)
-    separated[:, :size, :, :size] = cell_masks.transpose(0, 2, 1, 3)
+    rows, columns = height // cell_height, width // cell_width
+    cell_masks = _cells(mask, cell_height, cell_width)
+    separated = np.zeros(
+        (rows, cell_height + 1, columns, cell_width + 1), dtype=np.bool_
+    )
+    separated[:, :cell_height, :, :cell_width] = cell_masks.transpose(0, 2, 1, 3)
     mosaic = separated.transpose(0, 1, 2, 3).reshape(
-        rows * (size + 1), columns * (size + 1)
+        rows * (cell_height + 1), columns * (cell_width + 1)
     )
     structure = np.array(((0, 1, 0), (1, 1, 1), (0, 1, 0)), dtype=np.uint8)
     labels, count = ndimage.label(mosaic, structure=structure)
@@ -39,9 +47,11 @@ def _component_groups(mask: np.ndarray, size: int) -> dict[int, list[tuple[int, 
         return {}
     y_values, x_values = np.nonzero(labels)
     component_labels = labels[y_values, x_values]
-    local_y = y_values % (size + 1)
-    local_x = x_values % (size + 1)
-    cell_ids = (y_values // (size + 1)) * columns + x_values // (size + 1)
+    local_y = y_values % (cell_height + 1)
+    local_x = x_values % (cell_width + 1)
+    cell_ids = (y_values // (cell_height + 1)) * columns + x_values // (
+        cell_width + 1
+    )
     sizes = np.bincount(component_labels, minlength=count + 1)
     sums_y = np.bincount(component_labels, weights=local_y, minlength=count + 1)
     sums_x = np.bincount(component_labels, weights=local_x, minlength=count + 1)
@@ -52,9 +62,9 @@ def _component_groups(mask: np.ndarray, size: int) -> dict[int, list[tuple[int, 
         touches,
         component_labels,
         (local_y == 0)
-        | (local_y == size - 1)
+        | (local_y == cell_height - 1)
         | (local_x == 0)
-        | (local_x == size - 1),
+        | (local_x == cell_width - 1),
     )
     grouped: dict[int, list[tuple[int, int, int, bool]]] = defaultdict(list)
     for label in range(1, count + 1):
@@ -70,21 +80,39 @@ def _component_groups(mask: np.ndarray, size: int) -> dict[int, list[tuple[int, 
 
 
 def _spatial_means(values: np.ndarray) -> np.ndarray:
-    rows, columns, size, _ = values.shape
-    if size % 4 == 0:
-        return values.reshape(rows, columns, 4, size // 4, 4, size // 4).mean(
-            axis=(3, 5)
-        ).reshape(rows * columns, 16)
-    quotient, remainder = divmod(size, 4)
-    lengths = tuple(
-        quotient + (1 if index < remainder else 0) for index in range(4)
+    rows, columns, height, width = values.shape
+    if height % 4 == 0 and width % 4 == 0:
+        return values.reshape(
+            rows, columns, 4, height // 4, 4, width // 4
+        ).mean(axis=(3, 5)).reshape(rows * columns, 16)
+    height_quotient, height_remainder = divmod(height, 4)
+    width_quotient, width_remainder = divmod(width, 4)
+    height_edges = np.cumsum(
+        (
+            0,
+            *(
+                height_quotient + (1 if index < height_remainder else 0)
+                for index in range(4)
+            ),
+        )
     )
-    edges = np.cumsum((0, *lengths))
+    width_edges = np.cumsum(
+        (
+            0,
+            *(
+                width_quotient + (1 if index < width_remainder else 0)
+                for index in range(4)
+            ),
+        )
+    )
     return np.stack(
         [
-            values[:, :, edges[y] : edges[y + 1], edges[x] : edges[x + 1]].mean(
-                axis=(2, 3)
-            )
+            values[
+                :,
+                :,
+                height_edges[y] : height_edges[y + 1],
+                width_edges[x] : width_edges[x + 1],
+            ].mean(axis=(2, 3))
             for y in range(4)
             for x in range(4)
         ],
@@ -92,43 +120,46 @@ def _spatial_means(values: np.ndarray) -> np.ndarray:
     ).reshape(rows * columns, 16)
 
 
-def compute_cell_acceptance_batch(
+def _compute_rectangular_cell_acceptance_batch(
     rgb: np.ndarray,
     grid: PhysicalGrid,
-    cell_size: int,
+    cell_height: int,
+    cell_width: int,
 ) -> CellAcceptanceBatch | None:
     pixels = np.asarray(rgb)
     if (
         pixels.dtype != np.uint8
         or pixels.ndim != 3
         or pixels.shape[2] != 3
-        or cell_size < 4
-        or pixels.shape[0] % cell_size
-        or pixels.shape[1] % cell_size
+        or min(cell_height, cell_width) < 4
+        or pixels.shape[0] % cell_height
+        or pixels.shape[1] % cell_width
     ):
         return None
     height, width, _ = pixels.shape
-    rows, columns = height // cell_size, width // cell_size
+    rows, columns = height // cell_height, width // cell_width
     cell_count = rows * columns
-    area = cell_size * cell_size
-    cell_pixels = _cells(pixels, cell_size)
+    area = cell_height * cell_width
+    cell_pixels = _cells(pixels, cell_height, cell_width)
     flat_pixels = cell_pixels.reshape(cell_count, area, 3)
     normalized = flat_pixels.astype(np.float64) / 255.0
     hematoxylin = hematoxylin_concentration(pixels)
-    cell_h = _cells(hematoxylin, cell_size)
+    cell_h = _cells(hematoxylin, cell_height, cell_width)
     flat_h = cell_h.reshape(cell_count, area)
 
     pixel_area_um2 = grid.mpp_x * grid.mpp_y
     nuclear_min = max(1, int(np.ceil(0.25 / pixel_area_um2)))
     nuclear_max = max(nuclear_min, int(np.floor(128.0 / pixel_area_um2)))
-    nuclear_components = _component_groups(hematoxylin > 0.55, cell_size)
+    nuclear_components = _component_groups(
+        hematoxylin > 0.55, cell_height, cell_width
+    )
     sentinel = sentinel_mask(pixels, hematoxylin=hematoxylin)
     sentinel_min = max(1, int(np.ceil(0.05 / pixel_area_um2)))
     sentinel_max = max(sentinel_min, int(np.floor(4.0 / pixel_area_um2)))
-    sentinel_components = _component_groups(sentinel, cell_size)
+    sentinel_components = _component_groups(sentinel, cell_height, cell_width)
     bright = np.all(pixels > 245, axis=2)
     lumen_min = max(1, int(np.ceil(0.25 / pixel_area_um2)))
-    lumen_components = _component_groups(bright, cell_size)
+    lumen_components = _component_groups(bright, cell_height, cell_width)
 
     h_mean = flat_h.mean(axis=1)
     h_q95 = np.quantile(flat_h, 0.95, axis=1)
@@ -136,17 +167,21 @@ def compute_cell_acceptance_batch(
     boundary = []
     for scale_um in (0.25, 0.50, 1.00):
         offset = max(1, int(round(scale_um / grid.mean_mpp)))
-        if cell_size <= offset:
+        if min(cell_height, cell_width) <= offset:
             boundary.append(np.zeros(cell_count))
         else:
             horizontal = np.abs(cell_h[:, :, :, offset:] - cell_h[:, :, :, :-offset]).mean(
                 axis=(2, 3)
             )
-            vertical = np.abs(cell_h[:, :, offset:, :] - cell_h[:, :, :-offset, :]).mean(
-                axis=(2, 3)
+            vertical = (
+                np.abs(cell_h[:, :, offset:, :] - cell_h[:, :, :-offset, :]).mean(
+                    axis=(2, 3)
+                )
+                if cell_height > offset
+                else np.zeros((rows, columns))
             )
             boundary.append(((horizontal + vertical) / 2).reshape(cell_count))
-    if cell_size < 3:
+    if min(cell_height, cell_width) < 3:
         chromatin_mean = chromatin_q95 = np.zeros(cell_count)
     else:
         laplacian = np.abs(
@@ -190,9 +225,11 @@ def compute_cell_acceptance_batch(
         covariance_std[:, :, None] * covariance_std[:, None, :]
     )
     covariance_determinant = np.linalg.det(covariance)
-    red_spatial = _spatial_means(np.abs(red_green).reshape(rows, columns, cell_size, cell_size))
+    red_spatial = _spatial_means(
+        np.abs(red_green).reshape(rows, columns, cell_height, cell_width)
+    )
     blue_spatial = _spatial_means(
-        np.abs(blue_green).reshape(rows, columns, cell_size, cell_size)
+        np.abs(blue_green).reshape(rows, columns, cell_height, cell_width)
     )
 
     bounds_rows: list[tuple[int, int, int, int]] = []
@@ -222,8 +259,8 @@ def compute_cell_acceptance_batch(
         nuclear_values = (
             len(nuclear) * 1_000_000.0 / (area * pixel_area_um2),
             nuclear_area / area,
-            nuclear_y / max(cell_size - 1, 1),
-            nuclear_x / max(cell_size - 1, 1),
+            nuclear_y / max(cell_height - 1, 1),
+            nuclear_x / max(cell_width - 1, 1),
             h_mean[index],
             h_q95[index],
             h_q99[index],
@@ -242,11 +279,11 @@ def compute_cell_acceptance_batch(
             len(sentinel_values_raw) * 1_000_000.0 / (area * pixel_area_um2),
             sentinel_total / area,
             (sum(value[1] for value in sentinel_values_raw) / sentinel_total)
-            / max(cell_size - 1, 1)
+            / max(cell_height - 1, 1)
             if sentinel_total
             else 0.0,
             (sum(value[2] for value in sentinel_values_raw) / sentinel_total)
-            / max(cell_size - 1, 1)
+            / max(cell_width - 1, 1)
             if sentinel_total
             else 0.0,
         )
@@ -284,7 +321,12 @@ def compute_cell_acceptance_batch(
         )
         cell_y, cell_x = divmod(index, columns)
         bounds_rows.append(
-            (cell_x * cell_size, cell_y * cell_size, cell_size, cell_size)
+            (
+                cell_x * cell_width,
+                cell_y * cell_height,
+                cell_width,
+                cell_height,
+            )
         )
         group_rows["nuclear_objects"].append(nuclear_values)
         group_rows["architecture"].append(architecture_values)
@@ -300,6 +342,117 @@ def compute_cell_acceptance_batch(
                 "rare_event_sentinels",
                 "visual",
             )
+        ),
+    )
+
+
+def compute_cell_acceptance_batch(
+    rgb: np.ndarray,
+    grid: PhysicalGrid,
+    cell_size: int,
+) -> CellAcceptanceBatch | None:
+    return _compute_rectangular_cell_acceptance_batch(
+        rgb, grid, cell_size, cell_size
+    )
+
+
+def compute_partitioned_cell_acceptance_batch(
+    rgb: np.ndarray,
+    grid: PhysicalGrid,
+    cell_size: int,
+) -> CellAcceptanceBatch | None:
+    """Batch full and partial edge cells without changing their physical bounds."""
+    pixels = np.asarray(rgb)
+    if (
+        pixels.dtype != np.uint8
+        or pixels.ndim != 3
+        or pixels.shape[2] != 3
+        or cell_size < 4
+    ):
+        return None
+    height, width, _ = pixels.shape
+    core_height = height - height % cell_size
+    core_width = width - width % cell_size
+    parts: list[tuple[int, int, CellAcceptanceBatch]] = []
+
+    def add_part(
+        values: np.ndarray,
+        y_offset: int,
+        x_offset: int,
+        cell_height: int,
+        cell_width: int,
+    ) -> bool:
+        if not values.size:
+            return True
+        batch = _compute_rectangular_cell_acceptance_batch(
+            values, grid, cell_height, cell_width
+        )
+        if batch is None:
+            return False
+        parts.append((x_offset, y_offset, batch))
+        return True
+
+    remainder_height = height - core_height
+    remainder_width = width - core_width
+    requests = []
+    if core_height and core_width:
+        requests.append(
+            (pixels[:core_height, :core_width], 0, 0, cell_size, cell_size)
+        )
+    if core_height and remainder_width:
+        requests.append(
+            (
+                pixels[:core_height, core_width:],
+                0,
+                core_width,
+                cell_size,
+                remainder_width,
+            )
+        )
+    if remainder_height and core_width:
+        requests.append(
+            (
+                pixels[core_height:, :core_width],
+                core_height,
+                0,
+                remainder_height,
+                cell_size,
+            )
+        )
+    if remainder_height and remainder_width:
+        requests.append(
+            (
+                pixels[core_height:, core_width:],
+                core_height,
+                core_width,
+                remainder_height,
+                remainder_width,
+            )
+        )
+    if not requests or any(not add_part(*request) for request in requests):
+        return None
+
+    records = []
+    for x_offset, y_offset, batch in parts:
+        for index, (x, y, cell_width, cell_height) in enumerate(batch.bounds):
+            records.append(
+                (
+                    (x + x_offset, y + y_offset, cell_width, cell_height),
+                    tuple((name, values[index]) for name, values in batch.groups),
+                )
+            )
+    records.sort(key=lambda item: (item[0][1], item[0][0]))
+    names = tuple(name for name, _values in records[0][1])
+    return CellAcceptanceBatch(
+        tuple(bounds for bounds, _groups in records),
+        tuple(
+            (
+                name,
+                np.stack(
+                    [dict(groups)[name] for _bounds, groups in records], axis=0
+                ),
+            )
+            for name in names
         ),
     )
 

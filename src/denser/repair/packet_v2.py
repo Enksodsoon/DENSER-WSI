@@ -64,9 +64,17 @@ def _decode_composite_parts(payload: bytes) -> tuple[bytes, ...]:
 
 
 def encode_repair_packet(
-    mask: RepairMask, repaired: np.ndarray, *, base: np.ndarray | None = None
+    mask: RepairMask,
+    repaired: np.ndarray,
+    *,
+    base: np.ndarray | None = None,
+    precomputed_exact_residual: bytes | None = None,
 ) -> bytes:
-    pixel_residual = encode_exact_residual(repaired, mask)
+    pixel_residual = precomputed_exact_residual or encode_exact_residual(repaired, mask)
+    if precomputed_exact_residual is not None:
+        probe = apply_exact_residual(np.zeros_like(repaired), mask, pixel_residual)
+        if not np.array_equal(probe[mask.pixels], np.asarray(repaired)[mask.pixels]):
+            raise ValueError("precomputed exact residual does not match repaired pixels")
     residual = (
         min(
             pixel_residual,

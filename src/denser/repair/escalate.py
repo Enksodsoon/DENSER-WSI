@@ -129,7 +129,10 @@ def repair_until_verified(
             decoded, critical_mask, critical_residual
         )
         critical_payload = encode_repair_packet(
-            critical_mask, critical_repaired, base=decoded
+            critical_mask,
+            critical_repaired,
+            base=decoded,
+            precomputed_exact_residual=critical_residual,
         )
         if byte_dominated(len(critical_payload)):
             return fallback_result
@@ -204,7 +207,12 @@ def repair_until_verified(
 
     residual = encode_exact_residual(original, mask)
     repaired = apply_exact_residual(decoded, mask, residual)
-    exact = encode_repair_packet(mask, repaired, base=decoded)
+    exact = encode_repair_packet(
+        mask,
+        repaired,
+        base=decoded,
+        precomputed_exact_residual=residual,
+    )
     stored = with_prefix(exact)
     if (
         not byte_dominated(len(stored))

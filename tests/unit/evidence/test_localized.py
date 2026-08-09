@@ -127,7 +127,7 @@ def test_prepared_verifier_reuses_candidate_evidence_after_verification(
     assert evidence.version == prepared.contract.version
 
 
-def test_nondivisible_edge_tile_batches_full_core_cells(monkeypatch) -> None:
+def test_nondivisible_edge_tile_batches_core_and_partial_cells(monkeypatch) -> None:
     source = np.random.default_rng(91).integers(0, 256, (70, 75, 3), dtype=np.uint8)
     prepared = LocalizedAcceptanceVerifier(AcceptanceContract(), 32).prepare(source)
     calls = 0
@@ -140,7 +140,7 @@ def test_nondivisible_edge_tile_batches_full_core_cells(monkeypatch) -> None:
 
     monkeypatch.setattr("denser.evidence.localized.compute_acceptance_groups", counted)
     prepared.prepare_cells()
-    assert calls == 5
+    assert calls == 0
 
 
 def test_nondivisible_hybrid_batch_matches_scalar_acceptance(monkeypatch) -> None:
@@ -153,7 +153,7 @@ def test_nondivisible_hybrid_batch_matches_scalar_acceptance(monkeypatch) -> Non
     )
     hybrid = verifier.verify(source, decoded)
     monkeypatch.setattr(
-        "denser.evidence.localized.compute_cell_acceptance_batch",
+        "denser.evidence.localized.compute_partitioned_cell_acceptance_batch",
         lambda *args, **kwargs: None,
     )
     scalar = verifier.verify(source, decoded)
@@ -171,7 +171,7 @@ def test_physical_cell_33_batch_matches_scalar_acceptance(monkeypatch) -> None:
     )
     hybrid = verifier.verify(source, decoded)
     monkeypatch.setattr(
-        "denser.evidence.localized.compute_cell_acceptance_batch",
+        "denser.evidence.localized.compute_partitioned_cell_acceptance_batch",
         lambda *args, **kwargs: None,
     )
     scalar = verifier.verify(source, decoded)

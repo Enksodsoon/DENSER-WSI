@@ -13,6 +13,7 @@ from denser.repair.packet_v2 import (
     encode_composite_repair_packet,
     encode_repair_packet,
 )
+from denser.repair.residual import encode_exact_residual
 
 
 @dataclass(frozen=True)
@@ -177,6 +178,24 @@ def test_exact_repair_uses_smaller_signed_delta_encoding_when_available() -> Non
     np.testing.assert_array_equal(
         apply_repair_packet(proposal, delta_packet), original
     )
+
+
+def test_repair_packet_reuses_precomputed_exact_residual_byte_identically() -> None:
+    original = np.random.default_rng(43).integers(0, 256, (32, 32, 3), dtype=np.uint8)
+    proposal = original.copy()
+    proposal[:16, :16] //= 2
+    mask = build_union_repair_mask(
+        (RepairFailure(0, 0, 16, 16, 32, 32),), 0, 0.25
+    )
+    residual = encode_exact_residual(original, mask)
+    expected = encode_repair_packet(mask, original, base=proposal)
+    observed = encode_repair_packet(
+        mask,
+        original,
+        base=proposal,
+        precomputed_exact_residual=residual,
+    )
+    assert observed == expected
 
 
 def test_critical_exact_repair_can_precede_visual_transform_repair() -> None:

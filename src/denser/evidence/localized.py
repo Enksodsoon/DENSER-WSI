@@ -15,7 +15,7 @@ from denser.evidence.architecture import (
 from denser.evidence.cell_batch import (
     CellAcceptanceBatch,
     compare_cell_acceptance_batches,
-    compute_cell_acceptance_batch,
+    compute_partitioned_cell_acceptance_batch,
 )
 from denser.evidence.types import AcceptanceContract, AcceptanceEvidence, PhysicalGrid
 from denser.repair.mask import RepairFailure
@@ -107,16 +107,10 @@ class PreparedLocalizedAcceptanceVerifier:
             "rare_event_sentinels",
             "visual",
         ):
-            batch_height = height - height % self.cell_size_px
-            batch_width = width - width % self.cell_size_px
-            batched = (
-                compute_cell_acceptance_batch(
-                    self._source[:batch_height, :batch_width],
-                    self.physical_grid,
-                    self.cell_size_px,
-                )
-                if min(batch_height, batch_width) >= self.cell_size_px
-                else None
+            batched = compute_partitioned_cell_acceptance_batch(
+                self._source,
+                self.physical_grid,
+                self.cell_size_px,
             )
             if batched is not None:
                 self._cell_batch_reference = batched
@@ -152,17 +146,8 @@ class PreparedLocalizedAcceptanceVerifier:
         self.prepare_cells()
         acceptance_groups = tuple(name for name, _values in self._reference.groups)
         candidate_batch = (
-            compute_cell_acceptance_batch(
-                candidate[
-                    : max(
-                        (y + height for _x, y, _width, height in self._cell_batch_reference.bounds),
-                        default=0,
-                    ),
-                    : max(
-                        (x + width for x, _y, width, _height in self._cell_batch_reference.bounds),
-                        default=0,
-                    ),
-                ],
+            compute_partitioned_cell_acceptance_batch(
+                candidate,
                 self.physical_grid,
                 self.cell_size_px,
             )

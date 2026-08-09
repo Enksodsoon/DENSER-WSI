@@ -12,6 +12,7 @@ from denser.evidence.cell_batch import (
     compare_cell_acceptance_batches,
     compute_cell_acceptance_batch,
     compute_cell_acceptance_groups,
+    compute_partitioned_cell_acceptance_batch,
 )
 from denser.evidence.nuclei import nuclear_features
 from denser.evidence.sentinels import sentinel_features
@@ -202,6 +203,25 @@ def test_batched_cell_evidence_matches_scalar_for_physical_cell_33() -> None:
                 assert actual_values == pytest.approx(
                     expected_values, rel=1e-10, abs=1e-10
                 )
+
+
+def test_partitioned_batch_matches_scalar_partial_edge_cells() -> None:
+    rgb = np.random.default_rng(26).integers(0, 256, (70, 75, 3), dtype=np.uint8)
+    grid = PhysicalGrid(0.25, 0.25)
+    observed = compute_partitioned_cell_acceptance_batch(rgb, grid, 32)
+    assert observed is not None
+    for index, (x, y, width, height) in enumerate(observed.bounds):
+        expected = compute_acceptance_groups(rgb[y : y + height, x : x + width], grid)
+        actual = tuple(
+            (name, tuple(float(value) for value in values[index]))
+            for name, values in observed.groups
+        )
+        for (_name, actual_values), (_other, expected_values) in zip(
+            actual, expected, strict=True
+        ):
+            assert actual_values == pytest.approx(
+                expected_values, rel=1e-10, abs=1e-10
+            )
 
 
 def test_batched_cell_comparison_matches_scalar_contract() -> None:
