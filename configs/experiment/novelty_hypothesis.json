@@ -1,0 +1,20 @@
+{
+  "version": "DENSER-novelty-hypothesis-1",
+  "generation": 2,
+  "mechanism": "self-contained source-segment mosaic with evidence-contract verification",
+  "predeclared_differentiators": [
+    "independently decodable 512-pixel packets composed from bounded source segments",
+    "HE-V1 evidence-contract certificate bound to decoded pixels and physical scale",
+    "deterministic sparse repair and shared lossless fallback",
+    "complete-byte accounting including packet, certificate, index, and integrity bytes",
+    "fail-closed canonical packet and container verification"
+  ],
+  "claim_boundary": "research novelty only after positive technical gates and dated paper, standard, and patent review",
+  "not_claimed": [
+    "new entropy codec",
+    "clinical noninferiority",
+    "regulatory suitability",
+    "patentability",
+    "historical world-first status"
+  ]
+}

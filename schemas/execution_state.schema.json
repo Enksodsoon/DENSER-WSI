@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Enksodsoon/DENSER-WSI/schemas/execution_state.schema.json",
+  "title": "DENSER checkpointed execution state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "committed_steps", "completed_phases", "in_progress_step",
+    "attempts", "repeated_steps", "complete"
+  ],
+  "properties": {
+    "version": {"const": "DENSER-execution-state-1"},
+    "committed_steps": {"type": "array", "items": {"$ref": "#/$defs/step"}, "uniqueItems": true},
+    "completed_phases": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "in_progress_step": {"anyOf": [{"$ref": "#/$defs/step"}, {"type": "null"}]},
+    "attempts": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z0-9_-]+:[a-z0-9_.-]+$"},
+      "additionalProperties": {"type": "integer", "minimum": 1}
+    },
+    "repeated_steps": {"type": "array", "items": {"$ref": "#/$defs/step"}, "uniqueItems": true},
+    "complete": {"type": "boolean"}
+  },
+  "$defs": {
+    "step": {"type": "string", "pattern": "^[a-z0-9_-]+:[a-z0-9_.-]+$"}
+  }
+}

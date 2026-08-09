@@ -13,7 +13,7 @@ class PublicReleasePolicy:
         default_factory=lambda: frozenset(
             {
                 ".svs", ".vsi", ".ndpi", ".mrxs", ".scn", ".bif", ".czi",
-                ".mcv1", ".parquet", ".tif", ".tiff",
+                ".mcv1", ".mcv2", ".parquet", ".tif", ".tiff",
             }
         )
     )

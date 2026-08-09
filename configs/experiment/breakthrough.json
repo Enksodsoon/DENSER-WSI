@@ -1,0 +1,15 @@
+{
+  "version": "DENSER-breakthrough-generation-policy-1",
+  "container": "MC-V2",
+  "candidate_families": ["compact_eam_dct", "evidence_quadtree_standard"],
+  "quantization_steps": [1.0, 2.0, 4.0],
+  "allocation_palette": [0.25, 0.5, 1.0, 2.0, 4.0],
+  "maximum_confirmatory_seconds": 604800,
+  "maximum_process_gib": 24,
+  "minimum_host_reserve_gib": 8,
+  "minimum_final_slides": 18,
+  "minimum_standard_codec_families": 2,
+  "new_case_disjoint_holdout_per_generation": true,
+  "reuse_prior_final_for_tuning": false,
+  "novelty_claim_requires_positive_primary_result": true
+}

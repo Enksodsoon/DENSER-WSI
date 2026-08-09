@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["$schema", "version", "alpha", "tile_size_px", "spatial_summary_grid", "benign_controls", "harmful_controls", "challenge_selection", "standardization", "threshold_basis"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "version": {"const": "HE-V1-calibration-3"},
+    "alpha": {"const": 0.05},
+    "tile_size_px": {"const": 512},
+    "spatial_summary_grid": {"const": [4, 4]},
+    "benign_controls": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "object", "required": ["name", "digital_levels"]}
+    },
+    "harmful_controls": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {"type": "object", "required": ["name", "expected_group"]}
+    },
+    "challenge_selection": {"type": "string"},
+    "standardization": {"type": "string"},
+    "threshold_basis": {"const": "tile_familywise_max"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,12 @@
+{
+  "base_image": "python:3.12-slim@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36",
+  "base_amd64_manifest": "sha256:d657ab0ade19f404a6ccc883ab399540de667aff751748ce23c07330c5a89e64",
+  "python": "3.12.13",
+  "openslide": {"version": "4.0.1", "git_object": "51de3070fad7c3871fd299b3d6042ea535716160"},
+  "libvips": {"version": "8.18.4", "git_object": "e01a4797cabe77d457fdfa7d776b7a7e7ca6d6a7"},
+  "libjpeg_turbo": {"version": "3.2.0", "git_object": "c85e6b905bf237038faa936dab160ebfc5da0344"},
+  "openjpeg": {"version": "2.5.4", "git_object": "bbbe3a092256511ec9056a7ad204f9db42a87264"},
+  "libjxl": {"version": "0.12.0", "git_object": "a7a9c787341cf703dede03c2009fa460cae5e5df"},
+  "libavif": {"version": "1.4.1", "git_object": "cc1ba78b3c37066e57f2879b2696d4d7fbc1244b"},
+  "zstd": {"version": "1.5.7", "git_object": "ac66b19e6bd6b83238bf008eecc1298105298532"}
+}

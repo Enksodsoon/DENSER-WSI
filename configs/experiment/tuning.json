@@ -1,0 +1,6 @@
+{
+  "declared_profile_ids": ["DENSER-P1", "DENSER-P2", "DENSER-P3", "DENSER-P4"],
+  "selection_rule": "lowest_complete_bytes_then_lower_fallback_fraction",
+  "evidence_tolerance_relaxation_allowed": false,
+  "private_output": "results/tuning"
+}

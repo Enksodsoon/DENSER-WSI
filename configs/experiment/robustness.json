@@ -1,0 +1,9 @@
+{
+  "analysis_scope": "secondary_exploratory",
+  "primary_results_mutable": false,
+  "analyses": [
+    "alternate_mpp", "alternate_tile_size", "cold_warm_latency",
+    "scanner_project_heterogeneity", "external_data", "audit_only_evidence", "corruption"
+  ],
+  "private_output": "results/robustness"
+}

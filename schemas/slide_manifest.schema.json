@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Enksodsoon/DENSER-WSI/schemas/slide_manifest.schema.json",
+  "title": "Private case-disjoint slide manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "seed", "rows", "manifest_sha256"],
+  "properties": {
+    "version": {"const": "MC-V1-manifest-1"},
+    "seed": {"type": "integer"},
+    "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "research_id", "project_id", "case_group_sha256", "source_sha256",
+          "byte_count", "partition", "replacement_rank", "reason_code",
+          "outcome_inspected"
+        ],
+        "properties": {
+          "research_id": {"type": "string", "minLength": 1},
+          "project_id": {"type": "string", "pattern": "^TCGA-[A-Z0-9]+$"},
+          "case_group_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "byte_count": {"type": "integer", "minimum": 1},
+          "partition": {
+            "enum": ["development", "pilot", "tuning", "final", "reserve", "excluded"]
+          },
+          "replacement_rank": {"type": ["integer", "null"], "minimum": 1},
+          "reason_code": {"type": ["string", "null"]},
+          "outcome_inspected": {"const": false}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Enksodsoon/DENSER-WSI/schemas/completion_marker.schema.json",
+  "title": "DENSER autonomous completion marker",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "execution_status", "scientific_outcome", "completed_tasks",
+    "evaluable_final_slides", "expected_final_slides", "source_data_processed",
+    "reconstruction_checks_passed", "tests_passed", "tests_skipped",
+    "public_release_passed", "artifact_digest"
+  ],
+  "properties": {
+    "version": {"const": "DENSER-autonomous-completion-1"},
+    "execution_status": {"enum": ["complete", "resource_limited", "external_access_limited"]},
+    "scientific_outcome": {"enum": ["positive", "negative", "inconclusive", "not_evaluable"]},
+    "completed_tasks": {"const": 29},
+    "evaluable_final_slides": {"type": "integer", "minimum": 0},
+    "expected_final_slides": {"type": "integer", "minimum": 18},
+    "source_data_processed": {"type": "boolean"},
+    "reconstruction_checks_passed": {"const": 17},
+    "tests_passed": {"type": "integer", "minimum": 1},
+    "tests_skipped": {"type": "integer", "minimum": 0},
+    "public_release_passed": {"const": true},
+    "artifact_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
