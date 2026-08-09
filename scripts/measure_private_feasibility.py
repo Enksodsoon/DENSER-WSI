@@ -39,7 +39,6 @@ from denser.experiments.candidate_selection import (
     select_smallest_accepted_candidate,
 )
 from denser.governance.run_layout import RunLayout
-from denser.method.candidates import CandidateProfile, build_uniform_candidates
 from denser.orchestration.breakthrough import FeasibilityEvidence, evaluate_generation_gate
 from denser.orchestration.runtime_projection import (
     DevelopmentTimingSample,
@@ -235,11 +234,11 @@ def main() -> int:
         "results",
         "development",
         "generation-1",
-        f"feasibility-source-extension-{arguments.tiles_per_slide}-w{arguments.candidate_workers}-{'route-' + routing_digest[:12] if routing else 'full'}.private.json",
+        f"feasibility-source-extension-minimal-{arguments.tiles_per_slide}-w{arguments.candidate_workers}-{'route-' + routing_digest[:12] if routing else 'full'}.private.json",
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     identity = {
-        "version": "DENSER-private-feasibility-source-extension-1",
+        "version": "DENSER-private-feasibility-source-extension-2-minimal-method-set",
         "code_commit": arguments.code_commit,
         "image_digest": arguments.image_digest,
         "calibration_digest": calibration.sha256,
@@ -260,7 +259,6 @@ def main() -> int:
     completed = {
         (int(row["slide_index"]), int(row["tile_index"])) for row in samples
     }
-    profile = CandidateProfile((1.0, 2.0, 4.0))
     registry = build_default_registry()
     import openslide
 
@@ -300,18 +298,6 @@ def main() -> int:
                     standard, standard_select = _measure_selection(
                         rgb,
                         standard_candidates,
-                        registry,
-                        contract,
-                        grid,
-                        prepared_verifier,
-                        arguments.candidate_workers,
-                    )
-                    started = time.perf_counter()
-                    uniform_candidates = build_uniform_candidates(rgb, profile)
-                    uniform_build = time.perf_counter() - started
-                    uniform, uniform_select = _measure_selection(
-                        rgb,
-                        uniform_candidates,
                         registry,
                         contract,
                         grid,
@@ -359,14 +345,6 @@ def main() -> int:
                                 "decode_cold_seconds": standard_cold,
                                 "decode_warm_seconds": standard_warm,
                                 "rejected_profiles": len(standard.rejected_profiles),
-                            },
-                            "uniform": {
-                                "candidate_count": len(uniform_candidates),
-                                "build_seconds": uniform_build,
-                                "select_seconds": uniform_select,
-                                "complete_bytes": uniform.breakdown.complete,
-                                "status": uniform.status,
-                                "rejected_profiles": len(uniform.rejected_profiles),
                             },
                             "denser": {
                                 "candidate_count": len(standard_candidates)
