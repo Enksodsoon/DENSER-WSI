@@ -50,3 +50,28 @@ def test_invalid_profiles_are_rejected() -> None:
         JpegXlCodec(-1)
     with pytest.raises(ValueError):
         AvifCodec(101)
+
+
+def test_byte_stable_codecs_use_three_threads_under_two_process_limit(
+    tmp_path: Path,
+) -> None:
+    jpegxl_encode = JpegXlCodec(0.5).encode_command(
+        tmp_path / "in.ppm", tmp_path / "out.jxl"
+    )
+    jpegxl_decode = JpegXlCodec(0.5).decode_command(
+        tmp_path / "out.jxl", tmp_path / "decoded.ppm"
+    )
+    jpeg2000_encode = Jpeg2000Codec(4).encode_command(
+        tmp_path / "in.ppm", tmp_path / "out.jp2"
+    )
+    jpeg2000_decode = Jpeg2000Codec(4).decode_command(
+        tmp_path / "out.jp2", tmp_path / "decoded.ppm"
+    )
+    assert "--num_threads=3" in jpegxl_encode
+    assert "--num_threads=3" in jpegxl_decode
+    assert jpeg2000_encode[-2:] == ["-threads", "3"]
+    assert jpeg2000_decode[-2:] == ["-threads", "3"]
+    avif_encode = AvifCodec(90).encode_command(
+        tmp_path / "in.png", tmp_path / "out.avif"
+    )
+    assert avif_encode[avif_encode.index("--jobs") + 1] == "1"

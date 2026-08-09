@@ -38,7 +38,17 @@ class Jpeg2000Codec(SubprocessCodec):
             str(self.ratio),
             "-n",
             str(resolutions),
+            "-threads",
+            "3",
         ]
 
     def decode_command(self, input_path: Path, output_path: Path) -> list[str]:
-        return [self.decoder_executable, "-i", str(input_path), "-o", str(output_path)]
+        return [
+            self.decoder_executable,
+            "-i",
+            str(input_path),
+            "-o",
+            str(output_path),
+            "-threads",
+            "3",
+        ]

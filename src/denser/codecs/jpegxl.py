@@ -26,7 +26,7 @@ class JpegXlCodec(SubprocessCodec):
             str(output_path),
             f"--distance={self.distance:g}",
             "--effort=7",
-            "--num_threads=1",
+            "--num_threads=3",
         ]
 
     def decode_command(self, input_path: Path, output_path: Path) -> list[str]:
@@ -34,5 +34,5 @@ class JpegXlCodec(SubprocessCodec):
             self.decoder_executable,
             str(input_path),
             str(output_path),
-            "--num_threads=1",
+            "--num_threads=3",
         ]
