@@ -5,7 +5,7 @@ import pytest
 from PIL import ImageCms
 
 from denser.wsi.color import ColorPolicy, canonicalize_rgb
-from denser.wsi.metadata import MetadataError, resolve_mpp
+from denser.wsi.metadata import MetadataError, resolve_mpp, resolve_mpp_in_band
 
 
 def test_missing_profile_is_recorded_without_enhancement() -> None:
@@ -48,3 +48,17 @@ def test_mpp_requires_consistent_physical_scale() -> None:
 def test_mpp_missing_is_explicit() -> None:
     with pytest.raises(MetadataError, match="missing"):
         resolve_mpp({})
+
+
+def test_primary_mpp_band_rejects_robustness_scale() -> None:
+    assert resolve_mpp_in_band(
+        {"openslide.mpp-x": "0.25", "openslide.mpp-y": "0.25"},
+        minimum=0.20,
+        maximum=0.30,
+    ) == pytest.approx(0.25)
+    with pytest.raises(MetadataError, match="declared band"):
+        resolve_mpp_in_band(
+            {"openslide.mpp-x": "0.50", "openslide.mpp-y": "0.50"},
+            minimum=0.20,
+            maximum=0.30,
+        )

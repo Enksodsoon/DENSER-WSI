@@ -24,3 +24,14 @@ def resolve_mpp(
     if abs(mpp_x - mpp_y) / average > relative_tolerance:
         raise MetadataError("physical MPP axes are inconsistent")
     return average
+
+
+def resolve_mpp_in_band(
+    properties: Mapping[str, str], *, minimum: float, maximum: float
+) -> float:
+    if not math.isfinite(minimum) or not math.isfinite(maximum) or not 0 < minimum <= maximum:
+        raise ValueError("physical-scale band is invalid")
+    mpp = resolve_mpp(properties)
+    if not minimum <= mpp <= maximum:
+        raise MetadataError("physical MPP is outside the declared band")
+    return mpp

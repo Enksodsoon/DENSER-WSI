@@ -45,6 +45,7 @@ from denser.orchestration.runtime_projection import (
     deterministic_sample_indices,
     project_confirmatory_runtime,
 )
+from denser.wsi.metadata import resolve_mpp_in_band
 
 
 class _PeakContainerRss(AbstractContextManager["_PeakContainerRss"]):
@@ -83,15 +84,8 @@ class _PeakContainerRss(AbstractContextManager["_PeakContainerRss"]):
 
 def _physical_grid(slide: object) -> PhysicalGrid:
     properties = slide.properties  # type: ignore[attr-defined]
-    shared = properties.get("aperio.MPP")
-    mpp_x = properties.get("openslide.mpp-x", shared)
-    mpp_y = properties.get("openslide.mpp-y", shared)
-    if mpp_x is None or mpp_y is None:
-        raise ValueError("development slide lacks physical-scale metadata")
-    grid = PhysicalGrid(float(mpp_x), float(mpp_y))
-    if not (0.1 <= grid.mpp_x <= 1.0 and 0.1 <= grid.mpp_y <= 1.0):
-        raise ValueError("development slide physical scale is outside frozen range")
-    return grid
+    mpp = resolve_mpp_in_band(properties, minimum=0.20, maximum=0.30)
+    return PhysicalGrid(mpp, mpp)
 
 
 def _sample_tiles(
@@ -238,11 +232,11 @@ def main() -> int:
         "results",
         arguments.partition,
         "generation-1",
-        f"feasibility-{arguments.partition}-source-extension-minimal-{arguments.tiles_per_slide}-w{arguments.candidate_workers}-{'route-' + routing_digest[:12] if routing else 'full'}-{'scale-filtered' if arguments.exclude_missing_scale else 'strict'}.private.json",
+        f"feasibility-{arguments.partition}-source-extension-primary-band-{arguments.tiles_per_slide}-w{arguments.candidate_workers}-{'route-' + routing_digest[:12] if routing else 'full'}-{'scale-filtered' if arguments.exclude_missing_scale else 'strict'}.private.json",
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     identity = {
-        "version": "DENSER-private-feasibility-source-extension-2-minimal-method-set",
+        "version": "DENSER-private-feasibility-source-extension-3-primary-mpp-band",
         "code_commit": arguments.code_commit,
         "image_digest": arguments.image_digest,
         "calibration_digest": calibration.sha256,
@@ -283,7 +277,7 @@ def main() -> int:
                         raise ValueError("metadata exclusion checkpoint is invalid")
                     exclusion = {
                         "slide_index": slide_index,
-                        "reason_code": "physical_scale_metadata_missing",
+                        "reason_code": "physical_scale_missing_or_outside_primary_band",
                         "outcome_inspected": False,
                     }
                     if exclusion not in exclusions:
