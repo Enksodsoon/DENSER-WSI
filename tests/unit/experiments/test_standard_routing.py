@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from denser.experiments.standard_routing import derive_development_winner_routes
+from denser.experiments.standard_routing import (
+    derive_bounded_development_winner_routes,
+    derive_development_winner_routes,
+)
 
 
 def _report() -> dict[str, object]:
@@ -51,3 +54,12 @@ def test_winner_routes_reject_non_full_or_incomplete_evidence() -> None:
     report["samples"] = report["samples"][:-1]
     with pytest.raises(ValueError, match="eight tiles"):
         derive_development_winner_routes(report)
+
+
+def test_bounded_routes_choose_most_frequent_winners_deterministically() -> None:
+    routing = derive_bounded_development_winner_routes(_report(), max_profiles=1)
+    assert routing["selection_rule"] == "development-project-top-win-frequency-v1"
+    assert routing["max_profiles_per_project"] == 1
+    assert all(profiles == ["jpeg2000-r4"] for profiles in routing["routes"].values())
+    with pytest.raises(ValueError, match="positive profile limit"):
+        derive_bounded_development_winner_routes(_report(), max_profiles=0)

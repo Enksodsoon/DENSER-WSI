@@ -5,7 +5,10 @@ import json
 from pathlib import Path
 
 from denser.core.canonical import canonical_json_bytes
-from denser.experiments.standard_routing import derive_development_winner_routes
+from denser.experiments.standard_routing import (
+    derive_bounded_development_winner_routes,
+    derive_development_winner_routes,
+)
 from denser.governance.run_layout import RunLayout
 
 
@@ -17,6 +20,7 @@ def main() -> int:
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--generation", type=int, required=True)
     parser.add_argument("--full-ladder-report", type=Path, required=True)
+    parser.add_argument("--max-profiles", type=int)
     arguments = parser.parse_args()
     layout = RunLayout(arguments.repo_root, arguments.run_root)
     report_path = arguments.full_ladder_report.resolve()
@@ -27,7 +31,13 @@ def main() -> int:
     if not report_path.is_file():
         raise ValueError("full-ladder report does not exist")
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    routing = derive_development_winner_routes(report)
+    routing = (
+        derive_bounded_development_winner_routes(
+            report, max_profiles=arguments.max_profiles
+        )
+        if arguments.max_profiles is not None
+        else derive_development_winner_routes(report)
+    )
     output = layout.resolve(
         "manifests", f"generation-{arguments.generation}-standard-routing.private.json"
     )

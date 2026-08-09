@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections import Counter
 from typing import Any
 
 from denser.codecs.standard import ladder_from_profile_ids
@@ -63,3 +64,38 @@ def derive_development_winner_routes(
         ).hexdigest(),
         "routes": routes,
     }
+
+
+def derive_bounded_development_winner_routes(
+    report: dict[str, Any],
+    *,
+    max_profiles: int,
+    expected_projects: int = 6,
+    tiles_per_project: int = 8,
+) -> dict[str, Any]:
+    if max_profiles <= 0:
+        raise ValueError("bounded routing requires a positive profile limit")
+    routing = derive_development_winner_routes(
+        report,
+        expected_projects=expected_projects,
+        tiles_per_project=tiles_per_project,
+    )
+    counts: dict[str, Counter[str]] = {
+        project: Counter() for project in routing["routes"]
+    }
+    for sample in report["samples"]:
+        profile = sample["standard"]["profile"]
+        if profile != _FALLBACK_PROFILE:
+            counts[sample["project"]][profile] += 1
+    routing["routes"] = {
+        project: [
+            profile
+            for profile, _count in sorted(
+                counts[project].items(), key=lambda item: (-item[1], item[0])
+            )[:max_profiles]
+        ]
+        for project in sorted(counts)
+    }
+    routing["selection_rule"] = "development-project-top-win-frequency-v1"
+    routing["max_profiles_per_project"] = max_profiles
+    return routing
