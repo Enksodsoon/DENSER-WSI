@@ -15,6 +15,9 @@ def complete(**changes: object) -> CompletionCriteria:
         "acceptance_violations": 0,
         "independent_random_tile_decode": True,
         "full_slide_processing": True,
+        "encoding_time_ratio": 4.0,
+        "cold_decode_p95_ratio": 1.5,
+        "warm_decode_p95_ratio": 1.2,
     }
     values.update(changes)
     return CompletionCriteria(**values)
@@ -30,3 +33,16 @@ def test_low_final_count_is_not_evaluable_and_negative_rules_are_exact() -> None
     assert classify_scientific_outcome(result(.2, .08), complete(evaluable_final_slides=17)) == "not_evaluable"
     assert classify_scientific_outcome(result(.01, -.03, .04), complete()) == "negative"
     assert classify_scientific_outcome(result(.10, .02, .20), complete()) == "inconclusive"
+
+
+def test_positive_requires_predeclared_runtime_bounds() -> None:
+    positive = result(.20, .08)
+    assert classify_scientific_outcome(
+        positive, complete(encoding_time_ratio=10.01)
+    ) == "inconclusive"
+    assert classify_scientific_outcome(
+        positive, complete(cold_decode_p95_ratio=2.01)
+    ) == "inconclusive"
+    assert classify_scientific_outcome(
+        positive, complete(warm_decode_p95_ratio=2.01)
+    ) == "inconclusive"

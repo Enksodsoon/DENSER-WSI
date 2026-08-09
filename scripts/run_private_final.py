@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import threading
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -18,7 +19,12 @@ from denser.evidence.calibrate import (
     acceptance_contract_from_calibration,
     calibration_record_from_dict,
 )
-from denser.experiments.final import FinalHoldoutConfig, FinalSlideInput, run_final_holdout
+from denser.experiments.final import (
+    FinalHoldoutConfig,
+    FinalSlideInput,
+    run_final_holdout,
+    summarize_final_performance,
+)
 from denser.experiments.freeze import freeze_record_from_dict
 from denser.experiments.runtime_freeze import build_runtime_freeze_context
 from denser.governance.run_layout import PrivateRunLock, RunLayout
@@ -176,10 +182,12 @@ def main() -> int:
                     cpu_workers=arguments.cpu_workers,
                     acceptance_contract=contract,
                     checkpoint_interval_tiles=96,
+                    retain_address_debug_evidence=False,
                 ),
                 partition_manifest,
                 freeze,
             )
+        performance = summarize_final_performance(result.containers)
         summary = {
             "version": "DENSER-private-final-execution-1",
             "generation": arguments.generation,
@@ -191,12 +199,16 @@ def main() -> int:
             "ledgers_match_files": result.ledgers_match_files,
             "random_tiles_independently_decodable": result.random_tiles_independently_decodable,
             "unresolved_acceptance_violations": result.unresolved_acceptance_violations,
+            "performance": asdict(performance),
             "containers": [
                 {
                     "method": container.method,
                     "path": str(container.path),
                     "complete_bytes": container.complete_bytes,
                     "tile_count": container.tile_count,
+                    "encoding_seconds": container.encoding_seconds,
+                    "cold_decode_seconds": list(container.cold_decode_seconds),
+                    "warm_decode_seconds": list(container.warm_decode_seconds),
                 }
                 for container in result.containers
             ],

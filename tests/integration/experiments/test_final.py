@@ -13,10 +13,13 @@ from denser.codecs.registry import CodecRegistry
 from denser.core.models import ByteBreakdown
 from denser.data.manifest import PartitionManifest, SlideRecord
 from denser.experiments.final import (
+    FinalContainerResult,
     FinalHoldoutConfig,
     FinalSlideInput,
     iter_level0_grid,
     run_final_holdout,
+    select_random_access_probes,
+    summarize_final_performance,
 )
 from denser.experiments.freeze import FreezeContext, create_freeze_record
 
@@ -78,6 +81,13 @@ def test_final_encodes_every_level0_tile_once(tmp_path: Path) -> None:
     assert {key[0] for key in result.address_method_counts} == {"synthetic-final"}
     assert result.ledgers_match_files
     assert result.random_tiles_independently_decodable
+    assert all(container.encoding_seconds > 0 for container in result.containers)
+    assert all(container.random_probe_count == len(expected) for container in result.containers)
+    assert all(
+        len(container.cold_decode_seconds) == len(expected)
+        and len(container.warm_decode_seconds) == len(expected)
+        for container in result.containers
+    )
     assert maximum_readers == 2
     assert total_reads == len(expected)
     resumed = run_final_holdout(
@@ -95,6 +105,35 @@ def test_final_encodes_every_level0_tile_once(tmp_path: Path) -> None:
     assert total_reads == len(expected)
     assert resumed.ledgers_match_files
     assert resumed.random_tiles_independently_decodable
+    assert [container.encoding_seconds for container in resumed.containers] == [
+        container.encoding_seconds for container in result.containers
+    ]
+
+
+def test_random_access_probes_are_deterministic_and_not_endpoint_only() -> None:
+    addresses = tuple(iter_level0_grid(4096, 4096, 512))
+    first = select_random_access_probes(addresses, "f" * 64, "slide", 16)
+    second = select_random_access_probes(addresses, "f" * 64, "slide", 16)
+    assert first == second
+    assert len(first) == 16
+    assert len(set(first)) == 16
+    assert set(first) != {addresses[0], addresses[-1]}
+
+
+def test_final_performance_summary_uses_complete_method_observations(
+    tmp_path: Path,
+) -> None:
+    containers = (
+        FinalContainerResult("standard", tmp_path / "s1", 100, 2, 1.0, (1.0,), (2.0,)),
+        FinalContainerResult("denser", tmp_path / "d1", 80, 2, 2.0, (2.0,), (4.0,)),
+        FinalContainerResult("standard", tmp_path / "s2", 120, 2, 0.5, (1.0,), (2.0,)),
+        FinalContainerResult("denser", tmp_path / "d2", 90, 2, 1.0, (2.0,), (4.0,)),
+    )
+    summary = summarize_final_performance(containers)
+    assert summary.encoding_time_ratio == 2.0
+    assert summary.cold_decode_p95_ratio == 2.0
+    assert summary.warm_decode_p95_ratio == 2.0
+    assert summary.random_probe_observations == 4
 
 
 def test_final_forbids_sample_extrapolation(tmp_path: Path) -> None:
@@ -106,6 +145,40 @@ def test_final_forbids_sample_extrapolation(tmp_path: Path) -> None:
         quadtree_builder=no_quadtree,
     )
     assert not config.sampled_tile_extrapolation_for_primary_endpoint_allowed
+
+
+def test_final_can_drop_debug_address_maps_without_dropping_grid_validation(
+    tmp_path: Path,
+) -> None:
+    slide = FinalSlideInput(
+        "compact-final",
+        513,
+        513,
+        512,
+        lambda address: np.full(
+            (address.height, address.width, 3), 120, dtype=np.uint8
+        ),
+    )
+    row = SlideRecord("compact-final", "SYNTHETIC", "4" * 64, "5" * 64, 1, "final", None)
+    manifest = PartitionManifest("MC-V1-manifest-1", 9, (row,), "e" * 64)
+    context = freeze_context()
+    result = run_final_holdout(
+        FinalHoldoutConfig(
+            tmp_path,
+            (slide,),
+            context,
+            cpu_workers=1,
+            standard_builder=lossless_standard,
+            quadtree_builder=no_quadtree,
+            retain_address_debug_evidence=False,
+        ),
+        manifest,
+        create_freeze_record(context),
+    )
+    assert result.encoded_addresses == set()
+    assert result.address_method_counts == {}
+    assert all(container.tile_count == 4 for container in result.containers)
+    assert result.ledgers_match_files
 
 
 def test_final_source_extension_reuses_standard_and_selects_smaller_exact_packet(
