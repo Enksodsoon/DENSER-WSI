@@ -66,9 +66,11 @@ def project_confirmatory_runtime(
     samples: list[DevelopmentTimingSample],
     *,
     final_source_bytes: int,
+    final_source_bytes_by_project: dict[str, int] | None = None,
     worker_count: int,
     measured_parallel_speedup: float | None = None,
     measured_parallel_tile_seconds: float | None = None,
+    measured_parallel_tile_seconds_by_project: dict[str, float] | None = None,
     parallel_benchmark_tiles: int = 0,
     safety_factor: float = 1.25,
 ) -> RuntimeProjection:
@@ -105,6 +107,32 @@ def project_confirmatory_runtime(
         or measured_parallel_tile_seconds <= 0
     ):
         raise ValueError("measured parallel tile time must be positive and finite")
+    project_stratified = (
+        final_source_bytes_by_project is not None
+        or measured_parallel_tile_seconds_by_project is not None
+    )
+    if project_stratified:
+        if (
+            final_source_bytes_by_project is None
+            or measured_parallel_tile_seconds_by_project is None
+            or measured_parallel_speedup is None
+        ):
+            raise ValueError("project-stratified projection requires matched scaling inputs")
+        projects = {sample.project for sample in samples}
+        if (
+            set(final_source_bytes_by_project) != projects
+            or set(measured_parallel_tile_seconds_by_project) != projects
+        ):
+            raise ValueError("project-stratified projection requires exact project coverage")
+        if (
+            any(value <= 0 for value in final_source_bytes_by_project.values())
+            or sum(final_source_bytes_by_project.values()) != final_source_bytes
+            or any(
+                not math.isfinite(value) or value <= 0
+                for value in measured_parallel_tile_seconds_by_project.values()
+            )
+        ):
+            raise ValueError("project-stratified projection inputs are invalid")
     if not math.isfinite(safety_factor) or safety_factor < 1:
         raise ValueError("runtime safety factor must be finite and at least one")
     density = max(sample.level0_tiles / sample.source_bytes for sample in samples)
@@ -118,13 +146,41 @@ def project_confirmatory_runtime(
         if measured_parallel_tile_seconds is not None
         else p95_seconds / effective_speedup
     )
-    projected_seconds = projected_tiles * effective_tile_seconds * safety_factor
+    model_version = (
+        "development-max-density-p95-measured-scaling-v2"
+        if measured_parallel_speedup is not None
+        else "development-max-density-p95-v1"
+    )
+    if project_stratified:
+        assert final_source_bytes_by_project is not None
+        assert measured_parallel_tile_seconds_by_project is not None
+        project_densities = {
+            project: max(
+                sample.level0_tiles / sample.source_bytes
+                for sample in samples
+                if sample.project == project
+            )
+            for project in final_source_bytes_by_project
+        }
+        project_tiles = {
+            project: math.ceil(
+                final_source_bytes_by_project[project] * project_densities[project]
+            )
+            for project in final_source_bytes_by_project
+        }
+        projected_tiles = sum(project_tiles.values())
+        projected_seconds_without_safety = sum(
+            project_tiles[project]
+            * measured_parallel_tile_seconds_by_project[project]
+            for project in project_tiles
+        )
+        effective_tile_seconds = projected_seconds_without_safety / projected_tiles
+        projected_seconds = projected_seconds_without_safety * safety_factor
+        model_version = "development-project-stratified-measured-scaling-v3"
+    else:
+        projected_seconds = projected_tiles * effective_tile_seconds * safety_factor
     return RuntimeProjection(
-        (
-            "development-max-density-p95-measured-scaling-v2"
-            if measured_parallel_speedup is not None
-            else "development-max-density-p95-v1"
-        ),
+        model_version,
         len({sample.slide_key for sample in samples}),
         projected_tiles,
         density,

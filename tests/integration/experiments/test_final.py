@@ -187,6 +187,7 @@ def test_final_forbids_sample_extrapolation(tmp_path: Path) -> None:
         quadtree_builder=no_quadtree,
     )
     assert not config.sampled_tile_extrapolation_for_primary_endpoint_allowed
+    assert config.candidate_workers == 1
     with pytest.raises(ValueError, match="candidate workers"):
         FinalHoldoutConfig(
             tmp_path,

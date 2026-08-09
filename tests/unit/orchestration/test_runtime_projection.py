@@ -81,6 +81,42 @@ def test_projection_uses_conservative_measured_parallel_speedup() -> None:
     )
 
 
+def test_projection_stratifies_known_final_bytes_and_measured_project_rates() -> None:
+    samples = [_sample(index) for index in range(5)]
+    report = project_confirmatory_runtime(
+        samples,
+        final_source_bytes=15_000,
+        final_source_bytes_by_project={f"project-{index}": 3_000 for index in range(5)},
+        worker_count=6,
+        measured_parallel_speedup=2.0,
+        measured_parallel_tile_seconds=9.0,
+        measured_parallel_tile_seconds_by_project={
+            "project-0": 0.5,
+            "project-1": 0.6,
+            "project-2": 0.7,
+            "project-3": 0.8,
+            "project-4": 0.9,
+        },
+        parallel_benchmark_tiles=40,
+    )
+    assert report.model_version == "development-project-stratified-measured-scaling-v3"
+    assert report.projected_level0_tiles == 1_500
+    assert report.measured_parallel_tile_seconds == pytest.approx(0.7)
+    assert report.projected_confirmatory_seconds == pytest.approx(1_312.5)
+
+    with pytest.raises(ValueError, match="project coverage"):
+        project_confirmatory_runtime(
+            samples,
+            final_source_bytes=15_000,
+            final_source_bytes_by_project={"project-0": 15_000},
+            worker_count=6,
+            measured_parallel_speedup=2.0,
+            measured_parallel_tile_seconds=0.9,
+            measured_parallel_tile_seconds_by_project={"project-0": 0.5},
+            parallel_benchmark_tiles=40,
+        )
+
+
 def test_runtime_sample_indices_are_deterministic_uniform_without_replacement() -> None:
     first = deterministic_sample_indices(10_000, 64, seed=17, slide_ordinal=3)
     second = deterministic_sample_indices(10_000, 64, seed=17, slide_ordinal=3)

@@ -461,6 +461,18 @@ def main() -> int:
         projection = project_confirmatory_runtime(
             timing_samples,
             final_source_bytes=sum(int(row["file_size"]) for row in final_rows),
+            final_source_bytes_by_project=(
+                {
+                    project: sum(
+                        int(row["file_size"])
+                        for row in final_rows
+                        if row["project_id"] == project
+                    )
+                    for project in sorted({str(row["project_id"]) for row in final_rows})
+                }
+                if parallel_scaling is not None
+                else None
+            ),
             worker_count=arguments.worker_count,
             measured_parallel_speedup=(
                 float(parallel_scaling["measured_parallel_speedup"])
@@ -469,6 +481,16 @@ def main() -> int:
             ),
             measured_parallel_tile_seconds=(
                 float(parallel_scaling["parallel_effective_tile_seconds"])
+                if parallel_scaling is not None
+                else None
+            ),
+            measured_parallel_tile_seconds_by_project=(
+                {
+                    str(project): float(seconds)
+                    for project, seconds in parallel_scaling[
+                        "project_parallel_effective_tile_seconds"
+                    ].items()
+                }
                 if parallel_scaling is not None
                 else None
             ),

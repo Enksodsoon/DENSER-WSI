@@ -42,7 +42,7 @@ def main() -> int:
     parser.add_argument("--generation", type=int, required=True)
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--codec-subprocesses", type=int, default=2)
-    parser.add_argument("--candidate-workers", type=int, default=6)
+    parser.add_argument("--candidate-workers", type=int, default=1)
     parser.add_argument("--tiles-per-slide", type=int, default=8)
     parser.add_argument("--repeats", type=int, default=2)
     parser.add_argument("--seed", type=int, default=20260808)
@@ -183,6 +183,7 @@ def main() -> int:
             batch_reports.append(
                 {
                     "batch_ordinal": batch_ordinal,
+                    "project": sources[batch_ordinal].record.project_id,
                     "tiles": len(work_items),
                     "serial_seconds": batch_serial,
                     "parallel_seconds": batch_parallel,
@@ -198,6 +199,12 @@ def main() -> int:
     parallel_effective_tile_seconds = max(
         float(batch["parallel_effective_tile_seconds"]) for batch in batch_reports
     )
+    project_parallel_effective_tile_seconds = {
+        str(batch["project"]): float(batch["parallel_effective_tile_seconds"])
+        for batch in batch_reports
+    }
+    if len(project_parallel_effective_tile_seconds) != len(batch_reports):
+        raise RuntimeError("parallel scaling requires one distinct project per batch")
     if speedup <= 1:
         raise RuntimeError("parallel scaling did not improve throughput")
     identity = {
@@ -222,6 +229,7 @@ def main() -> int:
         "batches": batch_reports,
         "measured_parallel_speedup": speedup,
         "parallel_effective_tile_seconds": parallel_effective_tile_seconds,
+        "project_parallel_effective_tile_seconds": project_parallel_effective_tile_seconds,
         "peak_container_rss_bytes": memory.peak_bytes,
         "packets_equal": True,
         "source_data_processed": True,

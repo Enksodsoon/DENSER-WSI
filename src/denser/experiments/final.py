@@ -57,7 +57,7 @@ class FinalHoldoutConfig:
     methods: tuple[str, ...] = ("standard", "uniform", "denser")
     candidate_steps: tuple[float, ...] = (1.0, 2.0, 4.0)
     cpu_workers: int = 6
-    candidate_workers: int = 6
+    candidate_workers: int = 1
     max_codec_subprocesses: int = 2
     standard_ladder: StandardLadder = StandardLadder()
     standard_builder: Callable[[np.ndarray, StandardLadder], list[EncodedCandidate]] = build_standard_candidates
