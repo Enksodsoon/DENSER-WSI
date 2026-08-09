@@ -5,12 +5,18 @@ import json
 import subprocess
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import jsonschema
 
+from denser.core.canonical import canonical_json_bytes
 from denser.experiments.freeze import create_freeze_record, write_freeze_record
 from denser.experiments.runtime_freeze import build_runtime_freeze_context
 from denser.governance.run_layout import RunLayout
+
+
+def freeze_json_document(record: Any) -> dict[str, object]:
+    return json.loads(canonical_json_bytes(asdict(record)))
 
 
 def main() -> int:
@@ -42,10 +48,11 @@ def main() -> int:
         container_image_digest=arguments.image_digest,
     )
     record = create_freeze_record(context)
+    document = freeze_json_document(record)
     schema = json.loads(
         (repo / "schemas" / "freeze_record.schema.json").read_text(encoding="utf-8")
     )
-    jsonschema.Draft202012Validator(schema).validate(asdict(record))
+    jsonschema.Draft202012Validator(schema).validate(document)
     layout = RunLayout(repo, arguments.run_root)
     output = layout.resolve(
         "results", "final", f"generation-{arguments.generation}", "freeze-record.json"
